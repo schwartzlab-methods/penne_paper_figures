@@ -50,7 +50,7 @@ def main():
     label_L = []
     for each in tqdm(data):
         _, features = get_features(feature_extractor, image_processor, each)
-        feature_L.append(features)
+        feature_L.append(features.cpu().detach().numpy())
         label_L.append(each[2])
     np.save(os.path.join(args.output_dir, 'features.npy'), np.array(feature_L))
     np.save(os.path.join(args.output_dir, 'labels.npy'), np.array(label_L))
