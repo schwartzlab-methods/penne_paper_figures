@@ -10,6 +10,7 @@ from dataset import PanNukeDataset
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import torchvision.transforms.v2 as v2
 import argparse
 
 def generate_attn_maps(attn: torch.Tensor, size: int = 256, 
@@ -42,7 +43,9 @@ def generate_attn_maps(attn: torch.Tensor, size: int = 256,
 def get_attn_features(extractor, processor, x):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # convert x to tensor
-    x = torch.tensor(x).permute(2, 0, 1).unsqueeze(0)
+    toimage = v2.ToImage()
+    x = toimage(x)
+    # x = torch.tensor(x).permute(2, 0, 1).unsqueeze(0)
     # get attention and features
     attention, _ = owkin_features(extractor, device, processor, x, return_attn=True)
     return attention

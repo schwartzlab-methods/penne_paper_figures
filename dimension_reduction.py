@@ -12,7 +12,7 @@ if True:  # In order to bypass isort when saving
 alt.themes.register("publishTheme", altairThemes.publishTheme)
 alt.themes.enable("publishTheme")
 
-def plot_umap(data, labels, save_dir, exp_name,
+def plot_umap(data, labels, save_dir, exp_name, extractor,
               n_neighbors=50,metric="cosine"):
     '''
     Plot the umap of the data
@@ -30,7 +30,7 @@ def plot_umap(data, labels, save_dir, exp_name,
     handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=class_to_color[cls], markersize=10, label=cls)
            for cls in unique_classes]
     plt.legend(handles=handles, title="Classes")
-    plt.savefig(os.path.join(save_dir, f"umap_{exp_name}_{n_neighbors}.png"))
+    plt.savefig(os.path.join(save_dir, f"umap_{exp_name}_{n_neighbors}_{extractor}.png"))
     plt.close()
 
 def main(path_1, path_label, save_dir, extractor_name, exp_name):
@@ -38,7 +38,7 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
     cell_type = np.load(path_label)
 
     print("Numpy files loaded")
-    print(original[:,0,0,:].shape)
+    print(original.shape)
     print(cell_type.shape)
 
     # map cell type names to numbers
@@ -50,7 +50,10 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
     # pca
     # pca = PCA(n_components=2)
     pca = PCA(n_components=50)
-    embedding_original = pca.fit_transform(original[:,0,0,:])
+    if extractor_name == "phikon-v2":
+        embedding_original = pca.fit_transform(original[:,0,0,:])
+    else:
+        embedding_original = pca.fit_transform(original)
     var_ex_original = pca.explained_variance_ratio_
 
     # prep pandas for altair scatter
@@ -79,10 +82,13 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
     plt.close
 
     #plot umap
-    plot_umap(original[:,0,0,:], cell_type, save_dir, exp_name)
+    if extractor_name == "phikon-v2":
+        plot_umap(original[:,0,0,:], cell_type, save_dir, extractor_name, exp_name)
+    else:
+        plot_umap(original, cell_type, save_dir, extractor_name, exp_name)
 
 if __name__ == "__main__":
-    argparser = argparse.ArgumentParser(description="Plotting PCA")
+    argparser = argparse.ArgumentParser(description="Plotting dimension reduction")
     argparser.add_argument("--save_dir", type=str, help="The directory to save the plot")
     argparser.add_argument("--path", type=str, help="Path to feature extractor features")
     argparser.add_argument("--path_label", type=str, help="Path to the labels")

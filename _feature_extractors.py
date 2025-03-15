@@ -29,10 +29,13 @@ def resnet_features(model, device, x):
     model.to(device)
     model.eval()
     with torch.no_grad():
-        x = x.to(device)
+        toimage = v2.ToImage()
+        x = toimage(x)
+        # x = torch.tensor(x).permute(2, 0, 1).unsqueeze(0)
         todytpe = v2.ToDtype(torch.float32, scale=True)
         x = todytpe(x)
         x = torch.clamp(x, max=1, min=0) #correct for float overflow
+        x = x.to(device)
         # get the features
         x = model.conv1(x)
         x = model.bn1(x)
