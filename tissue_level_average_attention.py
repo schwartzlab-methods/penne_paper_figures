@@ -25,6 +25,7 @@ def get_attn_features(extractor, processor, x):
     return attention, features
 
 def weighted_sum_attention(attention: torch.Tensor, features: torch.Tensor) -> torch.Tensor:
+    no_cls_features = features[:, 1:]
     # average over the heads
     avg_attention = attention.mean(dim=1)
     cls_attn = avg_attention[:, 0, 1:]
@@ -32,7 +33,7 @@ def weighted_sum_attention(attention: torch.Tensor, features: torch.Tensor) -> t
     normalized_cls_attn = cls_attn / cls_attn.sum(dim=-1, keepdim=True)
     # weighted sum, where each patch is weighted by the attention
     # sum together to get a final feature representation with size (batch_size, hidden_size)
-    weighted_sum = torch.einsum("bh,bhs->bs", normalized_cls_attn, features)
+    weighted_sum = torch.einsum("bh,bhs->bs", normalized_cls_attn, no_cls_features)
     return weighted_sum
     
 def main():
