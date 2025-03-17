@@ -15,14 +15,13 @@ def owkin_features(model, device, image_processor, x, return_attn = False):
         x = todytpe(x)
         inputs = image_processor(x, return_tensors="pt")#, do_rescale=False)
         outputs = model(**inputs.to(device),output_attentions=return_attn)
-        extracted = outputs.last_hidden_state#[:, 0, :]
     # return last layer attention and full embedding
     # shape of attention is (batch_size, num_heads, seq_length, seq_length)
     # shape of extracted is (batch_size, seq_length, hidden_size)
     if return_attn: 
-        return outputs.attentions[-1], extracted
+        return outputs.attentions[-1], outputs.last_hidden_state#[:, 0, :]
     else:
-        return extracted
+        return outputs.last_hidden_state#[:, 0, :]
     
 def resnet_features(model, device, x):
     model.to(device)

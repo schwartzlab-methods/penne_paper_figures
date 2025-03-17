@@ -9,19 +9,15 @@ import os
 from tqdm import tqdm
 import argparse
 
-def get_attn_features(extractor, processor, x):
+def get_features(extractor, processor, x):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # convert x to image tensor
     toimage = v2.ToImage()
     x = toimage(x)
     # x = torch.tensor(x).permute(2, 0, 1).unsqueeze(0)
     # get attention and features
-    attention, features = owkin_features(extractor, device, processor, x, return_attn=True)
-    return attention, features
-
-def get_features(extractor, processor, x):
-    attention, features = get_attn_features(extractor, processor, x[0])
-    return attention, features
+    features = owkin_features(extractor, device, processor, x, return_attn=False)
+    return features
 
 def main():
     parser = argparse.ArgumentParser()
@@ -36,7 +32,7 @@ def main():
         feature_extractor = AutoModel.from_pretrained("/fs01/home/richarddong/.cache/huggingface/hub/phikon-v2")
         image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
         for each in tqdm(data):
-            _, features = get_features(feature_extractor, image_processor, each)
+            features = get_features(feature_extractor, image_processor, each)
             feature_L.append(features.cpu().detach().numpy())
             label_L.append(each[2])
     else:
