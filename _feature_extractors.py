@@ -11,10 +11,9 @@ def owkin_features(model, device, image_processor, x, return_attn = False):
     model.eval()
     with torch.no_grad():
         x = x.to(device)
-        todytpe = v2.ToDtype(torch.float32, scale=True)
+        todytpe = v2.ToDtype(torch.float32)#, scale=True)
         x = todytpe(x)
-        x = torch.clamp(x, max=1, min=0) #correct for float overflow
-        inputs = image_processor(x, return_tensors="pt", do_rescale=False)
+        inputs = image_processor(x, return_tensors="pt")#, do_rescale=False)
         outputs = model(**inputs.to(device),output_attentions=return_attn)
         extracted = outputs.last_hidden_state#[:, 0, :]
     # return last layer attention and full embedding
@@ -31,10 +30,15 @@ def resnet_features(model, device, x):
     with torch.no_grad():
         toimage = v2.ToImage()
         x = toimage(x)
-        # x = torch.tensor(x).permute(2, 0, 1).unsqueeze(0)
-        todytpe = v2.ToDtype(torch.float32, scale=True)
+        todytpe = v2.ToDtype(torch.float32)
         x = todytpe(x)
-        x = torch.clamp(x, max=1, min=0) #correct for float overflow
+        x = x / 255
+        preprocess = v2.Compose([
+            v2.Resize(256),  
+            v2.CenterCrop(224),  
+            v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) 
+        ])
+        x = preprocess(x).unsqueeze(0)
         x = x.to(device)
         # get the features
         x = model.conv1(x)
