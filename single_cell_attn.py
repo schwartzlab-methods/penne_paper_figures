@@ -12,14 +12,14 @@ from dataset import PanNukeDataset
 import numpy as np
 import os
 import torchvision.transforms.v2 as v2
-from skimage import measure
+from scipy.ndimage import label
 import argparse
 
 def get_attn_features(extractor, processor, x):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # convert x to tensor
-    toimage = v2.ToImage().unsqueeze(0)
-    x = toimage(x)
+    toimage = v2.ToImage()
+    x = toimage(x).unsqueeze(0)
     # reshape the image to (3, 256, 256)
     resizer = v2.Resize(256)
     x = resizer(x)
@@ -65,35 +65,41 @@ def compute_single_cell_features(attn: torch.Tensor, img: torch.Tensor, fea: tor
     class_token_attention = class_token_attention.mean(dim=1) # (1, num_patches, num_patches)
     attention_map = class_token_attention.view(num_patches_side, num_patches_side).cpu() # (num_patches, num_patches)
 
-    #! step2: segment the cells using thresholding
+    #! step2: segment the cells using the threshold
     # change the attention map to binary
-    attention_map_binary = (attention_map > 0).float()
+    attention_map_binary = (attention_map > 0.2).int()
     # get the connected components
-    labels = measure.label(attention_map_binary.numpy())
+    labels, num_cells = label(attention_map_binary.numpy())
+    print("Num cells identified: ", num_cells)
     
     #! step3: get the CLS attention for each cell
-    reshaped_features = fea[:, 1:] # (num_patches, hidden_size)
-    np_attention_map = attention_map.cpu().numpy() # (num_patches, num_patches) 
-    results = []
-    for cell in range(1, labels.max() + 1):
+    reshaped_features = fea[0, 1:, :].cpu() # (num_patches, hidden_size)
+    np_attention_map = attention_map.cpu().numpy() # (num_patches, num_patches)
+    cell_img_L = []
+    cell_mask_L = []
+    cell_feature_L = []
+    cell_size_L = []
+    for cell in range(1, num_cells+1):
         cell_mask: np.ndarray = (labels == cell).astype(np.float32) # (num_patches**0.5, num_patches**0.5)
         cell_attn: np.ndarray = np_attention_map * cell_mask # (num_patches**0.5, num_patches**0.5)
         cell_attn = cell_attn.reshape(-1) # (num_patches)
-        cell_attn_tensor = torch.tensor(cell_attn)
+        cell_attn_tensor = torch.tensor(cell_attn) # (num_patches)
         cell_features = reshaped_features * cell_attn_tensor.unsqueeze(-1) # (num_patches, hidden_size)
         cell_weighted_feature = cell_features.sum(dim=0) # (hidden_size)
         # extrapolate masks to size x size, with only 1 and 0
         resized_mask: torch.Tensor = torch.nn.functional.interpolate(torch.tensor(cell_mask).unsqueeze(0).unsqueeze(0).float(), 
                                                        size=(size, size), mode='nearest')
         # convert the resized_mask to binary
-        resized_mask = (resized_mask > 0)
+        resized_mask = (resized_mask > 0).float()
+        cell_size_L.append(resized_mask.sum().item())
+        # print("Size of Cell: ", resized_mask.sum().item(), "pixels")
         # get the image of the cell
-        cell_img: torch.Tensor = img[resized_mask]
-        results.append((cell_img.cpu().numpy().squeeze(0).transpose(1, 2, 0),
-                        resized_mask.squeeze(0).cpu().numpy().transpose(1, 2, 0),
-                        cell_weighted_feature.cpu().numpy()))
+        cell_img: torch.Tensor = img * resized_mask
+        cell_img_L.append(cell_img.cpu().numpy().squeeze(0).transpose(1, 2, 0))
+        cell_mask_L.append(resized_mask.squeeze(0).cpu().numpy().transpose(1, 2, 0))
+        cell_feature_L.append(cell_weighted_feature.cpu().numpy())
 
-    return results
+    return cell_img_L, cell_mask_L, cell_feature_L, cell_size_L
 
 def determine_cell_type(cell_mask: np.ndarray, img_mask: np.ndarray) -> tuple[str, float]:
     '''
@@ -103,12 +109,13 @@ def determine_cell_type(cell_mask: np.ndarray, img_mask: np.ndarray) -> tuple[st
     Also provide the percent frequencies for the label
     '''
     label_dic = {
-        0: "Neoplastic", 1: "Inflammatory", 2: "Connective/Soft_tissue", 3: "Dead", 4: "Epithelial", 6: "Background"
+        0: "Neoplastic", 1: "Inflammatory", 2: "Connective/Soft_tissue", 3: "Dead", 4: "Epithelial", 5: "Background"
     }
-    roi = img_mask[cell_mask]
-    roi_non_onehot: np.ndarray = np.argmax(roi, axis=-1)
-    roi_label: int = np.argmax(np.bincount(roi_non_onehot.flatten()))
-    roi_label_freq = np.bincount(roi_non_onehot.flatten())[roi_label] / roi_non_onehot.size
+    img_non_onehot: np.ndarray = np.argmax(img_mask, axis=-1)
+    cell_mask_bool = (cell_mask > 0).reshape((cell_mask.shape[0], cell_mask.shape[1]))
+    roi = img_non_onehot[cell_mask_bool]
+    roi_label: int = np.argmax(np.bincount(roi.flatten()))
+    roi_label_freq = np.bincount(roi.flatten())[roi_label] / roi.flatten().size
     return (label_dic[roi_label], roi_label_freq)
 
 def main():
@@ -119,32 +126,40 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     data = PanNukeDataset(args.root_dir)
+    print("Dataset created")
     feature_extractor = AutoModel.from_pretrained("/fs01/home/richarddong/.cache/huggingface/hub/phikon-v2")
     image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
-    cell_type = []
-    cell_feature = []
-    cell_type_freq = []
-    tissue_type = []
+    print("Phikon-v2 Loaded as Feature Extractor")
+    cell_type_L = []
+    cell_size_L = []
+    cell_feature_L = []
+    cell_type_freq_L = []
+    tissue_type_L = []
     for each in tqdm(data):
         img, attn, fea = get_attn_features(feature_extractor, image_processor, each[0])
-        cell_img, cell_mask, cell_feature = compute_single_cell_features(attn, img, fea)
+        cell_img, cell_mask, cell_feature, cell_size = compute_single_cell_features(attn, img, fea)
+        cell_size_L.extend(cell_size)
         # center crop the label to (224,224)
         img_mask = each[1]
-        cropped_mask = v2.CenterCrop(224)(torch.tensor(img_mask).unsqueeze(0)).squeeze(0).numpy()
+        img_mask_tensor = torch.tensor(img_mask).permute(2, 0, 1)
+        cropped_mask_tensor = v2.CenterCrop(224)(img_mask_tensor.unsqueeze(0))
+        cropped_mask = cropped_mask_tensor.squeeze(0).permute(1,2,0).numpy()
         for idx, _ in enumerate(cell_img):
             cell_type, cell_freq = determine_cell_type(cell_mask[idx], cropped_mask)
-            cell_type.append(cell_type)
-            cell_type_freq.append(cell_freq)
-            cell_feature.append(cell_feature[idx])
-            tissue_type.append(each[2])
-    cell_type = np.array(cell_type)
-    cell_type_freq = np.array(cell_type_freq)
-    cell_feature = np.array(cell_feature)
-    tissue_type = np.array(tissue_type)
-    np.save(os.path.join(args.output_dir, "cell_type.npy"), cell_type)
-    np.save(os.path.join(args.output_dir, "cell_type_freq.npy"), cell_type_freq)
-    np.save(os.path.join(args.output_dir, "cell_feature.npy"), cell_feature)
-    np.save(os.path.join(args.output_dir, "tissue_type.npy"), tissue_type)
+            cell_type_L.append(cell_type)
+            cell_type_freq_L.append(cell_freq)
+            cell_feature_L.append(cell_feature[idx])
+            tissue_type_L.append(each[2])
+    cell_type_L = np.array(cell_type_L)
+    cell_type_freq_L = np.array(cell_type_freq_L)
+    cell_feature_L = np.array(cell_feature_L)
+    tissue_type_L = np.array(tissue_type_L)
+    cell_size_L = np.array(cell_size_L)
+    np.save(os.path.join(args.output_dir, "cell_type.npy"), cell_type_L)
+    np.save(os.path.join(args.output_dir, "cell_size.npy"), cell_size_L)
+    np.save(os.path.join(args.output_dir, "cell_type_freq.npy"), cell_type_freq_L)
+    np.save(os.path.join(args.output_dir, "cell_feature.npy"), cell_feature_L)
+    np.save(os.path.join(args.output_dir, "tissue_type.npy"), tissue_type_L)
 
 if __name__ == '__main__':
     main()
