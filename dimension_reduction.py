@@ -22,11 +22,13 @@ def plot_umap(data, labels, save_dir, exp_name, extractor,
     plt.figure(figsize=(10, 10))
     # generate colours
     unique_classes = list(set(labels))
-    colors = plt.cm.get_cmap('tab20c', len(unique_classes))  # Using 'tab10' for distinct colors
+    colors = plt.cm.get_cmap('tab20c', len(unique_classes))
     class_to_color = {cls: colors(i) for i, cls in enumerate(unique_classes)}
     # plot
     for (x, y), cls in zip(embedding, labels):
-        plt.scatter(x, y, color=class_to_color[cls], label=cls, edgecolors='black')
+        if cls == "Background":
+            continue
+        plt.scatter(x, y, color=class_to_color[cls], label=cls)
     handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=class_to_color[cls], markersize=10, label=cls)
            for cls in unique_classes]
     plt.legend(handles=handles, title="Classes")
@@ -48,7 +50,6 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
     cell_type_num = [cell_type_dict[cell] for cell in cell_type]
 
     # pca
-    # pca = PCA(n_components=2)
     pca = PCA(n_components=50)
     if extractor_name == "phikon-v2":
         embedding_original = pca.fit_transform(original[:,0,0,:])
@@ -73,15 +74,13 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
     fig, ax = plt.subplots(1, 1, figsize=(10, 5))
     scatter1 = ax.scatter(embedding_original[:, 0], embedding_original[:, 1], c=cell_type_num, cmap='tab10', s=0.1)
     ax.set_title(extractor_name)
-    # scatter2 = ax[1].scatter(embedding_spaghetti[:, 0], embedding_spaghetti[:, 1], c=cell_type_num, cmap='tab10', s=0.1)
-    # ax[1].set_title(f"Spaghetti + {extractor_name}")
     handles, labels = scatter1.legend_elements()
     ax.legend(handles, np.unique(cell_type), title="Class", loc='center left', bbox_to_anchor=(1.04, 0.5))
     final_save_dir = os.path.join(save_dir, f"feature_pca_{extractor_name}_{exp_name}.png")
     plt.savefig(final_save_dir, bbox_inches="tight")
     plt.close
 
-    #plot umap
+    # plot umap with plt
     if extractor_name == "phikon-v2":
         plot_umap(original[:,0,0,:], cell_type, save_dir, extractor_name, exp_name)
     else:
