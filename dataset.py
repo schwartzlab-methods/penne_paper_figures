@@ -74,3 +74,54 @@ class VisiumDataset(Dataset):
         img = img[x_min:x_max, y_min:y_max, :]
         img_PIL = Image.fromarray(img)
         return img_PIL
+    
+#todo: implement the mtx files accordingly; the mtx files are in anndata format, including the coordinates in the obsm
+#todo: also update coordinate the accordingly, to match the patch instead of the whole image
+#todo: structure the data to be a list of single-cell features in npy + a list of expression values (normalized) in npy
+class VisiumHDDataset(Dataset):
+    ''''
+    Generate the VisiumHD dataset class
+    The VisiumHD dataset consists of:
+    - tissue_img/: a directory of images of the tissue
+    - mtx/: a directory of truncated matrix files, one for each tissue image, in anndata .h5ad format
+    - cells_csv/: the segmentations of the cells, with coordinates x1, y1, x2, y2, 
+                where (x1, y1) is the top left corner and (x2, y2) is the bottom right corner
+    '''
+    def __init__(self, tissue_dir, mtx_dir, cells_dir):
+        super(VisiumHDDataset, self).__init__()
+        self.imgs = tissue_dir
+        self.mtxs = mtx_dir
+        self.cells = cells_dir
+
+    def __len__(self):
+        return len(self.cells)
+    
+    def __getitem__(self, idx):
+        image = Image.open(self.imgs[idx]).convert('RGB')
+        mtx = ad.read_h5ad(self.mtxs[idx])
+        cells = pd.read_csv(self.cells[idx])
+        # track returns
+        exp_L = []
+        coordinate_L = []
+        for each_cell in cells.iterrows():
+        # get coordinates of the cell
+            x1, y1, x2, y2 = each_cell["x1"], each_cell["y1"], each_cell["x2"], each_cell["y2"]
+            # get the barcode
+            barcodes = mtx.obsm['spatial'][(mtx.obsm['spatial']['pxl_row_in_fullres'] >= x1) 
+                                        & (mtx.obsm['spatial']['pxl_row_in_fullres'] <= x2) 
+                                        & (mtx.obsm['spatial']['pxl_col_in_fullres'] >= y1) 
+                                        & (mtx.obsm['spatial']['pxl_col_in_fullres'] <= y2)]
+            barcodes_L = barcodes['barcode'].values
+            # get only the barcodes
+            new_mtx = mtx[self.anndata_mtx.obs.index.isin(barcodes_L)]
+            # combine all gene expression values
+            new_mtx = new_mtx.X.sum(axis=0)
+            # return as a list
+            spot_exp = new_mtx.toarray().flatten().tolist()
+            # append to the list
+            exp_L.append(spot_exp)
+            # append the coordinates
+            coordinate_L.append((x1, y1, x2, y2))
+        # get the region of the image
+        # region = image.crop((x1, y1, x2, y2))
+        return image, exp_L, coordinate_L
