@@ -3,16 +3,21 @@ Generate the feature representation of all cells in the PanNuke dataset using th
 To get each cell, we treat the top 60% of the attention map as the most important regions.
 We then extract the features from the model for each of these regions by calculating an averged sum of the features using the attention map and embeddings.
 '''
+import os
+import sys
+import inspect
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir)
 
 import torch
 from tqdm import tqdm
-from transformers import AutoImageProcessor, AutoModel
 from _feature_extractors import owkin_features
 from dataset import PanNukeDataset
 import numpy as np
-import os
 import torchvision.transforms.v2 as v2
 from scipy.ndimage import label
+from transformers import AutoImageProcessor, AutoModel
 import argparse
 
 def get_attn_features(extractor, processor, x):

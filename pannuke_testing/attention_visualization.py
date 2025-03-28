@@ -1,6 +1,12 @@
 '''
 Visualize the attention maps of the model using Phikon-v2 on the PanNuke dataset.
 '''
+import os
+import sys
+import inspect
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir)
 
 import torch
 from tqdm import tqdm
@@ -8,7 +14,6 @@ from transformers import AutoImageProcessor, AutoModel
 from _feature_extractors import owkin_features
 from dataset import PanNukeDataset
 import numpy as np
-import os
 import matplotlib.pyplot as plt
 import torchvision.transforms.v2 as v2
 import argparse
