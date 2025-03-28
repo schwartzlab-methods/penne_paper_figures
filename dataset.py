@@ -39,7 +39,7 @@ class VisiumDataset(Dataset):
     '''
     def __init__(self, root_dir, img_dir):
         super(VisiumDataset, self).__init__()
-        self.spatial = pd.read_csv(os.path.join(root_dir, 'spatial/tissue_positions.csv'))
+        self.spatial = pd.read_csv(os.path.join(root_dir, 'spatial/tissue_positions.csv'), sep=",", header = None)
         self.img = Image.fromarray(tiff.imread(img_dir))
         self.data = sc.read_10x_mtx(os.path.join(root_dir, 'filtered_feature_bc_matrix'))
     
@@ -57,25 +57,6 @@ class VisiumDataset(Dataset):
         # get the region of the image, 256x256
         region = self.img.crop((x-128, y-128, x+128, y+128))
         return region, spot_exp
-
-    def _get_region(df, img_dir):
-        '''
-        return the image
-        '''
-        # select the rows with colium "in_tissue" == 1 and greater than 0
-        df = df[df["in_tissue"] == 1]
-        df = df[df["pxl_row_in_fullres"] > 0]
-        df = df[df["pxl_col_in_fullres"] > 0]
-        # get the region of the image by looking at the max and min of the x and y
-        x_min = int(df["pxl_row_in_fullres"].min())
-        x_max = int(df["pxl_row_in_fullres"].max())
-        y_min = int(df["pxl_col_in_fullres"].min())
-        y_max = int(df["pxl_col_in_fullres"].max())
-        # get the image
-        img = tiff.imread(img_dir) #shape (x, y, 3)
-        img = img[x_min:x_max, y_min:y_max, :]
-        img_PIL = Image.fromarray(img)
-        return img_PIL
     
 class VisiumHDDataset(Dataset):
     ''''
@@ -113,3 +94,58 @@ class VisiumHDDataset(Dataset):
         # get the region of the image
         # region = image.crop((x1, y1, x2, y2))
         return image, mtx
+    
+class VisiumHD_Livecell_Dataset(Dataset):
+    ''''
+    Generate the VisiumHD and LIVECell dataset class
+    The VisiumHD dataset consists of:
+    - tissue_img/: a directory of images of the tissue
+    - mtx/: a directory of truncated matrix files, one for each tissue image, in anndata .h5ad format, which contains:
+        - the expression matrix in cells x features (in anndata.X)
+        - the spatial coordinates of the spots (in anndata.obs["cell_position_xmin/ymin/xmax/ymax"])
+        - the gene names (in anndata.var_names)
+    '''
+    def __init__(self, tissue_dir, mtx_dir, livecell_dir):
+        super(VisiumHD_Livecell_Dataset, self).__init__()
+        self.tissue_dir = tissue_dir
+        self.mtx_dir = mtx_dir
+        self.imgs = os.listdir(tissue_dir)
+        self.mtxs = os.listdir(mtx_dir)
+        self.livecell_path = self._find_all_files(livecell_dir)
+
+    def __len__(self):
+        return len(self.imgs)
+    
+    def __getitem__(self, idx):
+        name = self.imgs[idx].split(".")[0]
+        image_path = os.path.join(self.tissue_dir, f"{name}.png")
+        mtx_path = os.path.join(self.mtx_dir, f"{name}.h5ad")
+        image = Image.open(image_path).convert('RGB')
+        mtx = ad.read_h5ad(mtx_path)
+        # put in tensor
+        transforms_he = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+            v2.Resize((224, 224)),
+        ])
+        image = transforms_he(image)
+        mtx_tensor = torch.tensor(mtx.X.toarray().sum(axis=0)).float()
+        # select a random image from the livecell dataset
+        livecell_path = np.random.choice(self.livecell_path)
+        livecell_img = Image.open(livecell_path).convert('RGB')
+        transforms_pcm = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+            v2.RandomCrop((224,224)),
+            v2.Resize((224, 224)),
+        ])
+        livecell_img = transforms_pcm(livecell_img)
+        return image, mtx_tensor, livecell_img
+    
+    @staticmethod
+    def _find_all_files(path):
+        all_files = []
+        for root, _, files in os.walk(path):
+            for file in files:
+                all_files.append(os.path.join(root, file))
+        return all_files
