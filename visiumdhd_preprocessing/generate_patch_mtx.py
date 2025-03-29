@@ -33,23 +33,34 @@ def combine_barcodes(anndata_mtx, barcodes):
     # sc.pp.log1p(new_mtx)
     return new_mtx, num_transcripts
 
-def process_image(dir, each, x_off, y_off, position_matrix, cell_matrix, name):
+def process_image(tissue_dir, dir, each, x_off, y_off, position_matrix, cell_matrix, name):
     # generate new anndata object for each image
     barcodes = find_barcodes(x_off, y_off, x_off+224, y_off+224, position_matrix)
     new_mtx, num_trans = combine_barcodes(cell_matrix, barcodes)
-    print(f"Found {len(barcodes)} barcodes in {each}. Total number of transcripts: {num_trans}")
-    new_mtx.write(os.path.join(dir, f"{name}.h5ad"))
+    if num_trans > 0:
+        print(f"Found {len(barcodes)} barcodes in {each}. Total number of transcripts: {num_trans}")
+        new_mtx.write(os.path.join(dir, "mtx", f"{name}.h5ad"))
+        # copy the image to the new directory
+        image_path = os.path.join(tissue_dir, each)
+        new_image_path = os.path.join(dir, "tissue_img", f"{name}.png")
+        os.system(f"cp {image_path} {new_image_path}")
+    else:
+        print(f"No transcripts found in {each}. Skipping...")
 
 def main(dir, output, paraquet, cellranger):
-    if not os.path.exists(output):
-        os.makedirs(output)
+    mtx_save = os.path.join(output, "mtx")
+    img_save = os.path.join(output, "tissue_img")
+    if not os.path.exists(mtx_save):
+        os.makedirs(mtx_save)
+    if not os.path.exists(img_save):
+        os.makedirs(img_save)
     position_matrix = pd.read_parquet(paraquet)
     cell_matrix = sc.read_10x_mtx(cellranger)
     print("Files loaded. Start processing")
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         for each in os.listdir(dir):
             x_off, y_off = [int(i) for i in each.split("_")[:2]]
-            executor.submit(process_image, output, each, x_off, y_off, position_matrix, cell_matrix, 
+            executor.submit(process_image, dir, output, each, x_off, y_off, position_matrix, cell_matrix, 
                             each.split(".")[0])
         print("All images have been processed")
 
