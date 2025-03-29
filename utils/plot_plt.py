@@ -25,9 +25,11 @@ def plot_sbs_histogram(file_dirs, exp_name, output_dir):
     data = np.load(file_dirs[1])
     unique_classes = np.unique(classes)
     plot_data = [data[classes == cls] for cls in unique_classes]
-    plt.hist(plot_data, bins=10, label=unique_classes)
+    weights  = [np.zeros_like(data[classes == cls]) + 1. / data[classes == cls].size
+                for cls in unique_classes]
+    plt.hist(plot_data, bins=10, weights=weights, label=unique_classes)
     plt.title(f"{exp_name}")
-    plt.ylabel("Counts")
+    plt.ylabel("Frequency")
     plt.legend()
     plt.savefig(os.path.join(output_dir, f"{exp_name}_side_by_side_his.png"))
     plt.close()
