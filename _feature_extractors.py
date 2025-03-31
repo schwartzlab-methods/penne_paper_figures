@@ -13,7 +13,7 @@ def owkin_features(model, device, image_processor, x, return_attn = False):
         x = x.to(device)
         todytpe = v2.ToDtype(torch.float32)#, scale=True)
         x = todytpe(x)
-        inputs = image_processor(x, return_tensors="pt")#, do_rescale=False)
+        inputs = image_processor(x, return_tensors="pt", do_rescale=False)
         outputs = model(**inputs.to(device),output_attentions=return_attn)
     # return last layer attention and full embedding
     # shape of attention is (batch_size, num_heads, seq_length, seq_length)
@@ -51,3 +51,22 @@ def resnet_features(model, device, x):
         x = model.avgpool(x)
         x = torch.flatten(x, 1)
     return x
+
+def spaghetti_convertion(model, device, x):
+    '''
+    Perform the image translation of PCM -> HE using the SPAGHETTI model
+    '''
+    model.to(device)
+    model.eval()
+    with torch.no_grad():
+        normalization = v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        x = normalization(x)
+        x = x.to(device)
+        transformed = model(x)
+        # normalize to range [0,1]
+        out = torch.clamp(transformed, min=-1, max=1)
+        min_val = out.min()
+        max_val = out.max()
+        out = (out-min_val)/(max(max_val-min_val, 1e-5))
+        out = torch.clamp(out, min=0, max=1) # ensure no overflow
+    return out
