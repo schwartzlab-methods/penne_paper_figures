@@ -139,7 +139,7 @@ class VisiumHD_Livecell_Dataset(Dataset):
         mtx = ad.read_h5ad(mtx_path)
         # put in tensor
         image = self.he_transforms(image) / 255 # scale to [0,1]
-        mtx_tensor = torch.tensor(mtx.X.toarray()).float()
+        mtx_tensor = torch.tensor(mtx.X).float().view(-1)
         # select a random image from the livecell dataset
         livecell_path = np.random.choice(self.livecell_path)
         livecell_img = Image.open(livecell_path).convert('RGB')

@@ -4,7 +4,7 @@ from torch.utils.data import random_split
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import CSVLogger
-from spaghetti import _spaghetti_modules as c
+from modules import SpaghettiGenerator
 from model import GeneExpPredVisiumHD
 from dataset import VisiumHD_Livecell_Dataset
 from transformers import AutoImageProcessor, AutoModel
@@ -16,7 +16,7 @@ def init_spaghetti(model_path: str) -> torch.nn.Module:
     Initialize the SPAGHETTI model for image translation
     '''
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    generator = c.GeneratorResNet(3, 9)
+    generator = SpaghettiGenerator(3, 9)
     generator.to(device)
     ckpt = torch.load(model_path, map_location=device)["state_dict"]
     # get only G_AB weights
@@ -64,7 +64,6 @@ def train(train_loader, val_loader,
     '''
     ngpus_per_node = torch.cuda.device_count()
     num_nodes = int(os.environ.get("SLURM_NNODES"))
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if save_dir is None:
         final_save_dir = os.getcwd()
     else:
@@ -72,7 +71,7 @@ def train(train_loader, val_loader,
     # create model
     lit_model = GeneExpPredVisiumHD(num_genes, 
                                     converter, feature_extractor,
-                                    device, domain_weight = domain_weight, lr=lr)
+                                    domain_weight = domain_weight, lr=lr)
     # train model
     logger = CSVLogger(final_save_dir, name=name)
     trainer = pl.Trainer(max_epochs=epochs, devices=ngpus_per_node, num_nodes=num_nodes,

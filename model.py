@@ -8,28 +8,29 @@ import pytorch_lightning as pl
 class GeneExpPredVisiumHD(pl.LightningModule):
     def __init__(self, num_genes, 
                  converter, feature_extractor,
-                 device, domain_weight = 5.0, lr=1e-3):
+                 domain_weight = 5.0, lr=1e-3):
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
-        self.translator = modules.Translator().to(device)
-        self.domain_discriminator = modules.DomainDiscriminator(alpha=domain_weight).to(device)
-        self.predictor = modules.Predictor(input_size=1024, hidden_size=4056, output_size=num_genes).to(device)
+        self.translator = modules.Translator().to(self.device)
+        self.domain_discriminator = modules.DomainDiscriminator(alpha=domain_weight).to(self.device)
+        self.predictor = modules.Predictor(input_size=1024, hidden_size=4056, output_size=num_genes).to(self.device)
         # feature extractors
         self.feature_extractor = feature_extractor
         self.converter = converter
         # hyperparameters
         self.lr = lr
         self.domain_weight = domain_weight
-        self.device = device
         # loss functions
-        self.criterion = nn.MSELoss().to(device)
-        self.domain_criterion = nn.BCELoss().to(device)
+        self.criterion = nn.MSELoss().to(self.device)
+        self.domain_criterion = nn.BCELoss().to(self.device)
 
     def training_step(self, batch, batch_idx):
         he_image, mtx, pcm_image = batch
         # obtain the features
-        he_features = self.feature_extractor(he_image.to(self.device))
-        pcm_features = self.feature_extractor(self.converter(pcm_image.to(self.device)))
+        he_features = self.feature_extractor(he_image.to(self.device))[:, 0, :]
+        he_features = he_features.view(he_features.shape[0], -1)
+        pcm_features = self.feature_extractor(self.converter(pcm_image.to(self.device)))[:, 0, :]
+        pcm_features = pcm_features.view(pcm_features.shape[0], -1)
         # Translator part
         he_translated = self.translator(he_features)
         pcm_translated = self.translator(pcm_features)
@@ -57,7 +58,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         he_image, mtx, pcm_image = batch
         # obtain the features
         he_features = self.feature_extractor(he_image.to(self.device))[:, 0, :]
+        he_features = he_features.view(he_features.shape[0], -1)
         pcm_features = self.feature_extractor(self.converter(pcm_image.to(self.device)))[:, 0, :]
+        pcm_features = pcm_features.view(pcm_features.shape[0], -1)
         # Translator part
         he_translated = self.translator(he_features)
         pcm_translated = self.translator(pcm_features)
