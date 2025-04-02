@@ -39,7 +39,8 @@ def process_image(tissue_dir, dir, each, x_off, y_off, position_matrix, cell_mat
     new_mtx, num_trans = combine_barcodes(cell_matrix, barcodes)
     if num_trans > 0:
         print(f"Found {len(barcodes)} barcodes in {each}. Total number of transcripts: {num_trans}")
-        new_mtx.write(os.path.join(dir, "mtx", f"{name}.h5ad"))
+        # new_mtx.write(os.path.join(dir, "mtx", f"{name}.h5ad"))
+        np.save(os.path.join(dir, "mtx", f"{name}.npy"),new_mtx.X)
         # copy the image to the new directory
         image_path = os.path.join(tissue_dir, each)
         new_image_path = os.path.join(dir, "tissue_img", f"{name}.png")
