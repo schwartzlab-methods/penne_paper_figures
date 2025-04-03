@@ -4,6 +4,8 @@ import torch.utils.data
 import torch.nn as nn
 import modules
 import pytorch_lightning as pl
+import psutil
+import os
 
 class GeneExpPredVisiumHD(pl.LightningModule):
     def __init__(self, num_genes, 
@@ -24,64 +26,66 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.criterion = nn.MSELoss().to(self.device)
         self.domain_criterion = nn.BCELoss().to(self.device)
 
+    def log_memory_usage(self, stage):
+        process = psutil.Process(os.getpid())
+        memory_used = process.memory_info().rss / (1024 ** 2)  # Convert bytes to MB
+        print(f"[{stage}] Memory Usage: {memory_used:.2f} MB")
+
     def training_step(self, batch, batch_idx):
         he_image, mtx, pcm_image = batch
         # obtain the features
-        he_features = self.feature_extractor(he_image.to(self.device))[:, 0, :]
-        he_features = he_features.view(he_features.shape[0], -1)
-        pcm_features = self.feature_extractor(self.converter(pcm_image.to(self.device)))[:, 0, :]
-        pcm_features = pcm_features.view(pcm_features.shape[0], -1)
+        he_features = self.feature_extractor(self.device, he_image)[:, 0, :].view(he_image.shape[0], -1).detach()
+        pcm_features = self.feature_extractor(self.device, self.converter(self.device, pcm_image))[:, 0, :].view(pcm_image.shape[0], -1).detach()
+        
         # Translator part
         he_translated = self.translator(he_features)
         pcm_translated = self.translator(pcm_features)
+    
         # DANN part
-        pred_discriminator_fake = self.domain_discriminator(he_translated, pcm_translated)
-        pred_discriminator_real = self.domain_discriminator(he_translated, he_translated)
+        # pred_discriminator_fake = self.domain_discriminator(he_translated, pcm_translated)
+        # pred_discriminator_real = self.domain_discriminator(he_translated, he_translated)
+        pred_discriminator_fake = self.domain_discriminator(he_translated)
+        pred_discriminator_real = self.domain_discriminator(pcm_translated)
         fake_labels = torch.zeros_like(pred_discriminator_fake)
         real_labels = torch.ones_like(pred_discriminator_real)
-        discriminator_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
-                              self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+        domain_loss = self.domain_weight * (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
+                                            self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+
         # Predictor part
         exp_pred = self.predictor(he_translated)
         prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
-        # DANN part
-        domain_loss = self.domain_weight * (self.domain_criterion(pred_discriminator_fake, fake_labels) +
-                                            self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+
         # total loss for training
         total_loss = prediction_loss + domain_loss
-        self.log('train_loss', total_loss, prog_bar=False)
-        self.log('tran_discriminator_loss', discriminator_loss, prog_bar=False)
-        self.log('tran_prediction_loss', prediction_loss, prog_bar=True)
+        metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item(), "train_prediction_loss": prediction_loss.item()}
+        self.log_dict(metrics,prog_bar=True)
         return total_loss
  
     def validation_step(self, batch, batch_idx):
         he_image, mtx, pcm_image = batch
         # obtain the features
-        he_features = self.feature_extractor(he_image.to(self.device))[:, 0, :]
-        he_features = he_features.view(he_features.shape[0], -1)
-        pcm_features = self.feature_extractor(self.converter(pcm_image.to(self.device)))[:, 0, :]
-        pcm_features = pcm_features.view(pcm_features.shape[0], -1)
+        he_features = self.feature_extractor(self.device, he_image)[:, 0, :].view(he_image.shape[0], -1).detach()
+        pcm_features = self.feature_extractor(self.device, self.converter(self.device, pcm_image))[:, 0, :].view(pcm_image.shape[0], -1).detach()
         # Translator part
         he_translated = self.translator(he_features)
         pcm_translated = self.translator(pcm_features)
         # DANN part
-        pred_discriminator_fake = self.domain_discriminator(he_translated, pcm_translated)
-        pred_discriminator_real = self.domain_discriminator(he_translated, he_translated)
+        # pred_discriminator_fake = self.domain_discriminator(he_translated, pcm_translated)
+        # pred_discriminator_real = self.domain_discriminator(he_translated, he_translated)
+        pred_discriminator_fake = self.domain_discriminator(he_translated)
+        pred_discriminator_real = self.domain_discriminator(pcm_translated)
         fake_labels = torch.zeros_like(pred_discriminator_fake)
         real_labels = torch.ones_like(pred_discriminator_real)
-        discriminator_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
-                              self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+        domain_loss = self.domain_weight * (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
+                                            self.domain_criterion(pred_discriminator_real, real_labels)) / 2
         # Predictor part
         exp_pred = self.predictor(he_translated)
         prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
-        # DANN part
-        domain_loss = self.domain_weight * (self.domain_criterion(pred_discriminator_fake, fake_labels) +
-                                            self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+
         # total loss for validation
         total_loss = prediction_loss + domain_loss
-        self.log('val_loss', total_loss, prog_bar=False)
-        self.log('val_discriminator_loss', discriminator_loss, prog_bar=False)
-        self.log('val_prediction_loss', prediction_loss, prog_bar=True)
+        metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item(), "val_prediction_loss": prediction_loss.item()}
+        self.log_dict(metrics,prog_bar=True, sync_dist=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)

@@ -39,10 +39,10 @@ class DomainDiscriminator(nn.Module):
     def __init__(self, alpha=1.0):
         super(DomainDiscriminator, self).__init__()
         self.model = nn.Sequential(
-            nn.Linear(2048, 1024),
-            nn.ReLU(),
-            nn.BatchNorm1d(1024),
-            nn.Dropout(0.3),
+            # nn.Linear(2048, 1024),
+            # nn.ReLU(),
+            # nn.BatchNorm1d(1024),
+            # nn.Dropout(0.3),
 
             nn.Linear(1024, 512),
             nn.ReLU(),
@@ -64,13 +64,14 @@ class DomainDiscriminator(nn.Module):
         )
         self.alpha = alpha
 
-    def forward(self, vec1, vec2):
+    def forward(self, x):
         # Concatenate the two feature vectors
-        vec1 = GradReverse.apply(vec1, self.alpha)
-        vec2 = GradReverse.apply(vec2, self.alpha)
+        # vec1 = GradReverse.apply(vec1, self.alpha)
+        # vec2 = GradReverse.apply(vec2, self.alpha)
         # Concatenate the two feature vectors
-        x = torch.cat((vec1, vec2), dim=1)
-        return self.model(x)
+        # x = torch.cat((vec1, vec2), dim=1)
+        out = GradReverse.apply(x, self.alpha)
+        return self.model(out)
 
 #! Prediction modules
 #! Predict the whole transcriptome from the image

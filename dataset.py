@@ -109,9 +109,9 @@ class VisiumHD_Livecell_Dataset(Dataset):
         super(VisiumHD_Livecell_Dataset, self).__init__()
         self.tissue_dir = tissue_dir
         self.mtx_dir = mtx_dir
-        self.imgs = os.listdir(tissue_dir)
-        self.mtxs = os.listdir(mtx_dir)
-        self.livecell_path = self._find_all_files(livecell_dir)
+        self.imgs = np.array(os.listdir(tissue_dir))
+        self.mtxs = np.array(os.listdir(mtx_dir))
+        self.livecell_path = np.array(self._find_all_files(livecell_dir))
         # transformations
         self.he_transforms = v2.Compose([
             v2.ToImage(),
@@ -125,21 +125,21 @@ class VisiumHD_Livecell_Dataset(Dataset):
             v2.Resize((224, 224)),
         ])
         # get the number of genes from the mtx file
-        mtx = ad.read_h5ad(os.path.join(mtx_dir, self.mtxs[0]))
-        self.num_genes = mtx.X.shape[1]
+        mtx = np.load(os.path.join(mtx_dir, self.mtxs[0]))
+        self.num_genes = mtx.shape[1]
 
     def __len__(self):
-        return len(self.imgs)
+        return self.imgs.size
     
     def __getitem__(self, idx):
         name = self.imgs[idx].split(".")[0]
         image_path = os.path.join(self.tissue_dir, f"{name}.png")
-        mtx_path = os.path.join(self.mtx_dir, f"{name}.h5ad")
+        mtx_path = os.path.join(self.mtx_dir, f"{name}.npy")
         image = Image.open(image_path).convert('RGB')
-        mtx = ad.read_h5ad(mtx_path)
+        mtx = np.load(mtx_path)
         # put in tensor
         image = self.he_transforms(image) / 255 # scale to [0,1]
-        mtx_tensor = torch.tensor(mtx.X).float().view(-1)
+        mtx_tensor = torch.tensor(mtx).float().view(-1)
         # select a random image from the livecell dataset
         livecell_path = np.random.choice(self.livecell_path)
         livecell_img = Image.open(livecell_path).convert('RGB')

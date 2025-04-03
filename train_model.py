@@ -1,7 +1,6 @@
 import os
 import torch
-from torch.utils.data import random_split
-from torch.utils.data import DataLoader
+from torch.utils.data import random_split, DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import CSVLogger
 from modules import SpaghettiGenerator
@@ -45,7 +44,7 @@ def find_checkpoint(dir: str):
     
 def train(train_loader, val_loader, 
           num_genes, converter, feature_extractor,
-          batch_size=1, domain_weight=5.0,
+          domain_weight=5.0,
           lr = 0.0001, save_dir = None, epochs=100, name="gene_predictor"):
     '''
     Train the gene expression prediction model using PyTorch Lightning.
@@ -55,7 +54,6 @@ def train(train_loader, val_loader,
         num_genes: int, the number of genes in the dataset to predict
         converter: the converter module to convert the image to the right format
         feature_extractor: the feature extractor module to extract the features from the image
-        batch_size: int, the batch size for the model, default 1
         domain_weight: float, the weight for the domain adaptation loss, default 5.0
         lr: float, the learning rate for the model, default 0.0001
         save_dir: str, the directory to save the model checkpoints and logs. Default current directory
@@ -89,6 +87,10 @@ def train(train_loader, val_loader,
     print("Training ended.")
 
 def main():
+    # seeds for reproducibility
+    torch.manual_seed(42)
+    pl.seed_everything(42, workers=True)
+    # arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--visiumhd_dir', type=str, help='Directory containing the VisiumHD patches')
     parser.add_argument('--livecell_dir', type=str, help='Directory containing the LIVECell patches')
@@ -101,7 +103,6 @@ def main():
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # create dataset
     dataset = VisiumHD_Livecell_Dataset(args.visiumhd_dir, args.mtx_dir, args.livecell_dir)
     # split dataset into train and val
@@ -117,9 +118,9 @@ def main():
     # start training
     train(train_loader, val_loader, 
           num_genes=dataset.num_genes,
-          converter=lambda x: spaghetti_convertion(spaghetti, device, x),
-          feature_extractor=lambda x: owkin_features(feature_extractor, device, image_processor, x), 
-          batch_size=args.batch_size, domain_weight=args.domain_weight,
+          converter=lambda device, x: spaghetti_convertion(spaghetti, device, x),
+          feature_extractor=lambda device, x: owkin_features(feature_extractor, device, image_processor, x), 
+          domain_weight=args.domain_weight,
           lr=args.lr, save_dir=args.output_dir, epochs=args.epochs, name=args.name)
 
 
