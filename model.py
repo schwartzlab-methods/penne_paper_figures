@@ -31,6 +31,17 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         memory_used = process.memory_info().rss / (1024 ** 2)  # Convert bytes to MB
         print(f"[{stage}] Memory Usage: {memory_used:.2f} MB")
 
+    def forward(self, x, if_convert=True):
+        # if_concert is used to determine whether to use the converter or not
+        # if_concert = True, use the converter
+        # if_concert = False, do not use the converter
+        if if_convert:
+            x = self.converter(self.device, x)
+        x = self.feature_extractor(self.device, x).view(x.shape[0], -1).detach()
+        x = self.translator(x)
+        x = self.predictor(x)
+        return x
+
     def training_step(self, batch, batch_idx):
         he_image, mtx, pcm_image = batch
         # obtain the features
