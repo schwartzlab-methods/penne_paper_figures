@@ -104,7 +104,7 @@ def main():
     parser.add_argument('--mtx_dir', type=str, help='Directory containing the mtx files')
     parser.add_argument('--model_dir', type=str, help='Directory containing the model checkpoints')
     parser.add_argument('--gene_names', type=str, help='Path to the gene names feature tsv file')
-    parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model', default=None)
+    parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
@@ -117,24 +117,50 @@ def main():
     # create feature extractor
     feature_extractor = AutoModel.from_pretrained("/fs01/home/richarddong/.cache/huggingface/hub/phikon-v2")
     image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
-    model = GeneExpPredVisiumHD(dataset.num_genes, None, 
-                                lambda device, x: owkin_features(feature_extractor, device, image_processor, x))
-    model = model.load_from_checkpoint(args.model_dir).freeze()
+    model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_dir, num_genes = dataset.num_genes, 
+                                converter = lambda device, x: spaghetti_convertion(init_spaghetti(args.spaghetti_model), device, x), 
+                                feature_extractor = lambda device, x: owkin_features(feature_extractor, device, image_processor, x))
+    model.freeze()
     # inference
     pred_L = []
     gt_L = []
+    features_he_L = []
+    features_pcm_L = []
+    features_pcm_non_translate_L = []
+    features_he_non_translated_L = []
     with torch.no_grad():
         for batch in tqdm(val_loader, total=len(val_loader)):
-            he_image, mtx, _ = batch
-            pred_exp = model(he_image)
+            he_image, mtx, pcm = batch
+            pred_exp = model.forward(he_image, if_convert=False)
+            # compute some features
+            features_he = model.compute_feature(he_image, if_convert=False, if_translate=True)
+            features_he_non_translated = model.compute_feature(he_image, if_convert=False, if_translate=False)
+            features_pcm = model.compute_feature(pcm, if_convert=True, if_translate=True)
+            features_pcm_non_translate = model.compute_feature(pcm, if_convert=True, if_translate=False)
             # remove all negative values
             pred_exp[pred_exp < 0] = 0
             pred_L.append(pred_exp.cpu().numpy())
-            gt_L.append(mtx.cpu().numpy())
+            gt_L.append(mtx.view.cpu().numpy())
+            features_he_L.append(features_he.cpu().numpy())
+            features_pcm_L.append(features_pcm.cpu().numpy())
+            features_pcm_non_translate_L.append(features_pcm_non_translate.cpu().numpy())
+            features_he_non_translated_L.append(features_he_non_translated.cpu().numpy())
     pred = np.concatenate(pred_L, axis=0)
     true = np.concatenate(gt_L, axis=0)
+    he_features_translated = np.concatenate(features_he_L, axis=0)
+    he_features_non_translated = np.concatenate(features_he_non_translated_L, axis=0)
+    pcm_features_translated = np.concatenate(features_pcm_L, axis=0)
+    pcm_features_non_translated = np.concatenate(features_pcm_non_translate_L, axis=0)
     print(f"Final prediction shape: {pred.shape}") # spots x features
     print("Finished generating predictions")
+
+    # save numpys
+    np.save(os.path.join(args.output_dir, "pred.npy"), pred)
+    np.save(os.path.join(args.output_dir, "true.npy"), true)
+    np.save(os.path.join(args.output_dir, "he_features_translated.npy"), he_features_translated)
+    np.save(os.path.join(args.output_dir, "he_features_non_translated.npy"), he_features_non_translated)
+    np.save(os.path.join(args.output_dir, "pcm_features_translated.npy"), pcm_features_translated)
+    np.save(os.path.join(args.output_dir, "pcm_features_non_translated.npy"), pcm_features_non_translated)
 
     #! across spots correlation
     corr = np.zeros(pred.shape[0])
