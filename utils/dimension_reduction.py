@@ -35,9 +35,29 @@ def plot_umap(data, labels, save_dir, exp_name, extractor,
     plt.savefig(os.path.join(save_dir, f"umap_{exp_name}_{n_neighbors}_{extractor}.png"))
     plt.close()
 
+def prepare_data(data, labels):
+    '''
+    Concat data by labeling each data point with its label
+    '''
+    label_L = []
+    data_L = []
+    for i, each in enumerate(data):
+        features = np.load(each)
+        data_L.append(features)
+        if os.path.isfile(labels[i]):
+            label_L.append(np.load(labels[i]))
+        else:
+            length = features.shape[0]
+            label_L.append(np.array([labels[i]] * length))
+    label_array = np.array(label_L, axis=None)
+    data_array = np.concatenate(data_L, axis=0)
+    return data_array, label_array
+
 def main(path_1, path_label, save_dir, extractor_name, exp_name):
-    original = np.load(path_1)
-    cell_type = np.load(path_label)
+
+    # original = np.load(path_1)
+    # cell_type = np.load(path_label)
+    original, cell_type = prepare_data(path_1, path_label)
 
     print("Numpy files loaded")
     print(original.shape)
@@ -89,8 +109,8 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description="Plotting dimension reduction")
     argparser.add_argument("--save_dir", type=str, help="The directory to save the plot")
-    argparser.add_argument("--path", type=str, help="Path to feature extractor features")
-    argparser.add_argument("--path_label", type=str, help="Path to the labels")
+    argparser.add_argument("--path", type=str, nargs="+", help="Paths to feature extractor features")
+    argparser.add_argument("--path_label", type=str, nargs="+", help="Paths or names to the labels")
     argparser.add_argument("--extractor", type=str, help="name of the feature extractor")
     argparser.add_argument("--exp_name", type=str, help="name of the experiment")
     args = argparser.parse_args()
