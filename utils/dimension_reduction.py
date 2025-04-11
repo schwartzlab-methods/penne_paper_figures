@@ -49,7 +49,7 @@ def prepare_data(data, labels):
         else:
             length = features.shape[0]
             label_L.append(np.array([labels[i]] * length))
-    label_array = np.array(label_L, axis=None)
+    label_array = np.concatenate(label_L, axis=None)
     data_array = np.concatenate(data_L, axis=0)
     return data_array, label_array
 

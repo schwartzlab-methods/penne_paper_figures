@@ -39,11 +39,6 @@ class DomainDiscriminator(nn.Module):
     def __init__(self, alpha=1.0):
         super(DomainDiscriminator, self).__init__()
         self.model = nn.Sequential(
-            # nn.Linear(2048, 1024),
-            # nn.ReLU(),
-            # nn.BatchNorm1d(1024),
-            # nn.Dropout(0.3),
-
             nn.Linear(1024, 512),
             nn.ReLU(),
             nn.BatchNorm1d(512),
@@ -66,10 +61,6 @@ class DomainDiscriminator(nn.Module):
 
     def forward(self, x):
         # Concatenate the two feature vectors
-        # vec1 = GradReverse.apply(vec1, self.alpha)
-        # vec2 = GradReverse.apply(vec2, self.alpha)
-        # Concatenate the two feature vectors
-        # x = torch.cat((vec1, vec2), dim=1)
         out = GradReverse.apply(x, self.alpha)
         return self.model(out)
 

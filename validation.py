@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import seaborn as sns
 from scipy.cluster import hierarchy
-import altair as alt
 from torch.utils.data import random_split, DataLoader
 import pytorch_lightning as pl
 from modules import SpaghettiGenerator
@@ -19,6 +18,12 @@ from dataset import VisiumHD_Livecell_Dataset
 from transformers import AutoImageProcessor, AutoModel
 import argparse
 from _feature_extractors import owkin_features, spaghetti_convertion
+import altair as alt
+## plotting settings
+if True:  # In order to bypass isort when saving
+    from altairThemes import altairThemes
+alt.themes.register("publishTheme", altairThemes.publishTheme)
+alt.themes.enable("publishTheme")
 
 def init_spaghetti(model_path: str) -> torch.nn.Module:
     '''
@@ -73,7 +78,7 @@ def compute_corr(save_dir, name, expression_gt, matched_spot_expression_pred, to
     plt.title(f"Correlation of top {top_k} genes ranked by mean expression")
     plt.xlabel("Correlation")
     plt.ylabel("Frequency")
-    plt.savefig(os.path.join(save_dir,f"corr_hist_overall_{name}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(save_dir,f"corr_hist_highly_variable_{name}.png"), dpi=300, bbox_inches='tight')
     return np.mean(corr)
 
 # def convert_pred(pred: np.ndarray, true: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -125,9 +130,10 @@ def main():
     pred_L = []
     gt_L = []
     features_he_L = []
+    features_he_non_translated_L = []
     features_pcm_L = []
     features_pcm_non_translate_L = []
-    features_he_non_translated_L = []
+    features_pcm_non_convert_L = []
     with torch.no_grad():
         for batch in tqdm(val_loader, total=len(val_loader)):
             he_image, mtx, pcm = batch
@@ -137,20 +143,23 @@ def main():
             features_he_non_translated = model.compute_feature(he_image, if_convert=False, if_translate=False)
             features_pcm = model.compute_feature(pcm, if_convert=True, if_translate=True)
             features_pcm_non_translate = model.compute_feature(pcm, if_convert=True, if_translate=False)
+            features_pcm_non_convert = model.compute_feature(pcm, if_convert=False, if_translate=False)
             # remove all negative values
             pred_exp[pred_exp < 0] = 0
             pred_L.append(pred_exp.cpu().numpy())
-            gt_L.append(mtx.view.cpu().numpy())
+            gt_L.append(mtx.cpu().numpy())
             features_he_L.append(features_he.cpu().numpy())
+            features_he_non_translated_L.append(features_he_non_translated.cpu().numpy())
             features_pcm_L.append(features_pcm.cpu().numpy())
             features_pcm_non_translate_L.append(features_pcm_non_translate.cpu().numpy())
-            features_he_non_translated_L.append(features_he_non_translated.cpu().numpy())
+            features_pcm_non_convert_L.append(features_pcm_non_convert.cpu().numpy())
     pred = np.concatenate(pred_L, axis=0)
     true = np.concatenate(gt_L, axis=0)
     he_features_translated = np.concatenate(features_he_L, axis=0)
     he_features_non_translated = np.concatenate(features_he_non_translated_L, axis=0)
     pcm_features_translated = np.concatenate(features_pcm_L, axis=0)
     pcm_features_non_translated = np.concatenate(features_pcm_non_translate_L, axis=0)
+    pcm_features_non_converted  = np.concatenate(features_pcm_non_convert_L, axis=0)
     print(f"Final prediction shape: {pred.shape}") # spots x features
     print("Finished generating predictions")
 
@@ -161,6 +170,7 @@ def main():
     np.save(os.path.join(args.output_dir, "he_features_non_translated.npy"), he_features_non_translated)
     np.save(os.path.join(args.output_dir, "pcm_features_translated.npy"), pcm_features_translated)
     np.save(os.path.join(args.output_dir, "pcm_features_non_translated.npy"), pcm_features_non_translated)
+    np.save(os.path.join(args.output_dir, "pcm_features_non_converted.npy"), pcm_features_non_converted)
 
     #! across spots correlation
     corr = np.zeros(pred.shape[0])
@@ -173,9 +183,7 @@ def main():
         alt.X("correlation", bin=alt.Bin(maxbins=20)),
         y='count()',
     ).properties(
-        title="Correlation of predicted vs ground truth expression across spots",
-        width=300,
-        height=150
+        title="Correlation of predicted vs ground truth expression across spots"
     ).interactive()
     chart.save(os.path.join(args.output_dir, f"correlation_spots_hist_{args.name}.html"))
 
@@ -190,20 +198,18 @@ def main():
         alt.X("correlation", bin=alt.Bin(maxbins=20)),
         y='count()',
     ).properties(
-        title="Correlation of predicted vs ground truth expression across genes",
-        width=300,
-        height=150
+        title="Correlation of predicted vs ground truth expression across genes"
     ).interactive()
     chart.save(os.path.join(args.output_dir, f"correlation_hist_genes_{args.name}.html"))
 
-    # gene analysis
+    ## gene analysis
     gene_names = pd.read_csv(args.gene_names, sep="\t", header = None)[0].values
     adata_raw = sc.AnnData(true)
-    adata_raw.var_names = pd.read_csv(gene_names, sep="\t", header = None)[0].values
+    adata_raw.var_names = gene_names
     print(f"Shape of raw adata: {adata_raw.shape}")
 
     adata_pred = sc.AnnData(pred)
-    adata_pred.var_names = pd.read_csv(gene_names, sep="\t", header = None)[0].values
+    adata_pred.var_names = gene_names
     print(f"Shape of predicted adata: {adata_pred.shape}")
 
     # compute gene lists
@@ -239,19 +245,19 @@ def main():
 
     # plot correlation heatmap of top 50 highly variable genes for each
     # get expression matrix for top 50 highly variable genes
-    hv_genes = adata_pred.var_names[adata_pred.var['highly_variable']==True]
-    hv_genes = hv_genes[:50]
-    hv_genes_idx = [adata_pred.var_names.get_loc(gene) for gene in hv_genes]
-    plot_heatmap(args.output_dir, adata_pred[:,hv_genes].X.T, adata_pred[:,hv_genes].X.T, top_k=50, exp=f"hv_genes_pred_heatmap_{args.name}.png")
+    # hv_genes = adata_pred.var_names[adata_pred.var['highly_variable']==True]
+    # hv_genes = hv_genes[:50]
+    # hv_genes_idx = [adata_pred.var_names.get_loc(gene) for gene in hv_genes]
+    # plot_heatmap(args.output_dir, adata_pred[:,hv_genes].X.T, adata_pred[:,hv_genes].X.T, top_k=50, exp=f"hv_genes_pred_heatmap_{args.name}.png")
 
-    hv_genes = adata_raw.var_names[adata_raw.var['highly_variable']==True]
-    hv_genes = hv_genes[:50]
-    hv_genes_idx = [adata_raw.var_names.get_loc(gene) for gene in hv_genes]
-    plot_heatmap(args.output_dir, adata_raw[:,hv_genes].X.T, adata_raw[:,hv_genes].X.T, top_k=50, exp=f"hv_genes_gt_heatmap_{args.name}.png")
+    # hv_genes = adata_raw.var_names[adata_raw.var['highly_variable']==True]
+    # hv_genes = hv_genes[:50]
+    # hv_genes_idx = [adata_raw.var_names.get_loc(gene) for gene in hv_genes]
+    # plot_heatmap(args.output_dir, adata_raw[:,hv_genes].X.T, adata_raw[:,hv_genes].X.T, top_k=50, exp=f"hv_genes_gt_heatmap_{args.name}.png")
 
-    hv_pred = adata_pred[:,adata_pred.var['highly_variable']==True]
-    hv_raw = adata_raw[:,adata_raw.var['highly_variable']==True]
-    compute_corr(args.output_dir, args.name, hv_raw.X.T, hv_pred.X.T, top_k=50)
+    # hv_pred = adata_pred[:,adata_pred.var['highly_variable']==True]
+    # hv_raw = adata_raw[:,adata_raw.var['highly_variable']==True]
+    # compute_corr(args.output_dir, args.name, hv_raw.X.T, hv_pred.X.T, top_k=50)
         
 
 if __name__ == "__main__":

@@ -32,9 +32,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         print(f"[{stage}] Memory Usage: {memory_used:.2f} MB")
 
     def forward(self, x, if_convert=False):
-        # if_concert is used to determine whether to use the converter or not
-        # if_concert = True, use the converter
-        # if_concert = False, do not use the converter
+        # if_convert is used to determine whether to use the converter or not
         if if_convert:
             x = self.converter(self.device, x)
         x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1).detach()
@@ -67,8 +65,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         pred_discriminator_real = self.domain_discriminator(pcm_translated)
         fake_labels = torch.zeros_like(pred_discriminator_fake)
         real_labels = torch.ones_like(pred_discriminator_real)
-        domain_loss = self.domain_weight * (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
-                                            self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+        domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
+                       self.domain_criterion(pred_discriminator_real, real_labels)) / 2
 
         # Predictor part
         exp_pred = self.predictor(he_translated)
@@ -89,14 +87,12 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         he_translated = self.translator(he_features)
         pcm_translated = self.translator(pcm_features)
         # DANN part
-        # pred_discriminator_fake = self.domain_discriminator(he_translated, pcm_translated)
-        # pred_discriminator_real = self.domain_discriminator(he_translated, he_translated)
         pred_discriminator_fake = self.domain_discriminator(he_translated)
         pred_discriminator_real = self.domain_discriminator(pcm_translated)
         fake_labels = torch.zeros_like(pred_discriminator_fake)
         real_labels = torch.ones_like(pred_discriminator_real)
-        domain_loss = self.domain_weight * (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
-                                            self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+        domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
+                       self.domain_criterion(pred_discriminator_real, real_labels)) / 2
         # Predictor part
         exp_pred = self.predictor(he_translated)
         prediction_loss = self.criterion(exp_pred, mtx.to(self.device))

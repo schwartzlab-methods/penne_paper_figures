@@ -116,13 +116,13 @@ class VisiumHD_Livecell_Dataset(Dataset):
         self.he_transforms = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32),
-            v2.Resize((224, 224)),
+            v2.Resize((256, 256)),
         ])
         self.pcm_transforms = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32),
-            v2.RandomCrop((224,224)),
-            v2.Resize((224, 224)),
+            v2.RandomCrop((64,64)),
+            v2.Resize((256, 256)),
         ])
         # get the number of genes from the mtx file
         mtx = np.load(os.path.join(mtx_dir, self.mtxs[0]))
