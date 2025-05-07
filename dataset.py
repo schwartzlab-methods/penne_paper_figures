@@ -26,6 +26,51 @@ class PanNukeDataset(Dataset):
         return len(self.images)
     def __getitem__(self, idx):
         return self.images[idx], self.masks[idx], self.type[idx]
+    
+class LiveCellDataset(Dataset):
+    '''
+    Construct the LiveCell dataset class
+    Returns the image as well as the cell type
+    '''
+    def __init__(self, paths: list[str]):
+        super(LiveCellDataset, self).__init__()
+        self.paths = paths
+        self.images: list[str] = []
+        self.classes: list[str] = []
+        self.transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+            v2.RandomCrop((64,64)),
+            v2.Resize((256, 256)),
+        ])
+        self._write_attributes() # this will write class_to_idx and targets
+    
+    def _write_attributes(self):
+        for path in self.paths:
+            all_cls = [x for x in os.listdir(path) if os.path.isdir(os.path.join(path, x))]
+            for cls in all_cls:
+                imgs = [os.path.join(root, img) for root, _, imgs in os.walk(os.path.join(path, cls)) for img in imgs]
+                self.images.extend(imgs)
+                self.classes.extend([cls]*len(imgs))
+        # get the class to idx mapping
+        self.class_to_idx = {cls: i for i, cls in enumerate(np.unique(self.classes).tolist())}
+        self.targets = [self.class_to_idx[x] for x in self.classes] # targets are the class indices
+        assert len(self.images) == len(self.targets)
+        self.class_count_dict = {k: self.classes.count(k) for k in np.unique(self.classes)}
+
+    def __getitem__(self, idx):
+        img = Image.open(self.images[idx])
+        img = np.array(img, dtype=np.uint16)
+        img = self.transform(img)
+        img = img / 255 # rescale to [0,1]
+        img = torch.clamp(img, max=1, min=0) #ensure no float overflow
+        cls_idx = self.targets[idx]
+        cls = self.classes[idx]
+        # retrun the image as x and the class int label, image path, and img cls as y
+        return img, (cls_idx, self.images[idx], cls)
+    
+    def __len__(self):
+        return len(self.images)
 
 class VisiumDataset(Dataset):
     '''
