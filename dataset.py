@@ -55,7 +55,7 @@ class LiveCellDataset(Dataset):
         # get the class to idx mapping
         self.class_to_idx = {cls: i for i, cls in enumerate(np.unique(self.classes).tolist())}
         self.targets = [self.class_to_idx[x] for x in self.classes] # targets are the class indices
-        assert len(self.images) == len(self.targets)
+        assert len(self.images) == len(self.targets) == len(self.classes)
         self.class_count_dict = {k: self.classes.count(k) for k in np.unique(self.classes)}
 
     def __getitem__(self, idx):
