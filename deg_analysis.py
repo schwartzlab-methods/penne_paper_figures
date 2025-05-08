@@ -9,7 +9,7 @@ import statsmodels.api as sm
 import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
-
+from tqdm import tqdm
 
 def main():
     # Set up argument parser
@@ -24,7 +24,7 @@ def main():
         os.makedirs(args.output)
 
     # Load count data (rows: cells, columns: gemes)
-    counts = np.load(args.counts)
+    counts = np.load(args.counts).astype(float)
     cell_types = np.load(args.labels)
     gene_names = np.load(args.genes)
     assert counts.shape[0] == cell_types.shape[0], "Counts and labels must have the same number of cells"
@@ -41,33 +41,42 @@ def main():
     # get only the cell types of interest from counts
     cell_type_mask = np.isin(cell_types, args.cell_types)
     counts = counts[cell_type_mask]
-    cell_types = cell_types[cell_type_mask]
+    cell_types = cell_types[cell_type_mask].astype(str)
 
     # Create a DataFrame for the counts
     counts_df = pd.DataFrame(counts, columns=gene_names)
 
     # do differential expression analysis
     results = []
-    for gene in gene_names:
+    new_gene_names = []
+    for gene in tqdm(gene_names):
         # Create a DataFrame for the current gene
         gene_df = counts_df[[gene]].copy()
+        if (0 == gene_df.to_numpy()).all():
+            continue
+        new_gene_names.append(gene)
         gene_df['cell_type'] = cell_types
 
+        # Create the design matrix
+        X = sm.add_constant(pd.get_dummies(gene_df['cell_type'], drop_first=True)).astype(float)
+        y = gene_df[gene].astype(float)
         # Fit a linear model
-        model = sm.OLS(gene_df[gene], sm.add_constant(pd.get_dummies(gene_df['cell_type'], drop_first=True)))
+        model = sm.OLS(y, X, missing="drop")
         results.append(model.fit())
-    
+
     # Extract p-values and coefficients
     p_values = [result.pvalues[1] for result in results]
     coefficients = [result.params[1] for result in results]
+    print("Final number of genes analyzed: ", len(new_gene_names))
     # Create a DataFrame for the results
     results_df = pd.DataFrame({
-        'gene': gene_names,
+        'gene': new_gene_names,
         'p_value': p_values,
         'coefficient': coefficients
     })
     # Adjust p-values for multiple testing
     results_df['adj_p_value'] = sm.stats.multipletests(results_df['p_value'], method='fdr_bh')[1]
+    results_df["adj_p_value < 0.05"] = (results_df['adj_p_value'] < 0.05).astype(str)
     # Save results
     results_df.to_csv(os.path.join(args.output, f'deg_{args.cell_types[0]}vs{args.cell_types[1]}.csv'), index=False)
     # Plot results
@@ -80,10 +89,15 @@ def main():
     plt.savefig(os.path.join(args.output, f'deg_plot_{args.cell_types[0]}vs{args.cell_types[1]}.png'))
     plt.close()
     # get a list of differentially expressed genes
-    deg_genes = results_df[results_df['adj_p_value'] < 0.05]['gene'].tolist()
+    deg_genes_up = results_df[results_df['adj_p_value'] < 0.05][results_df['coefficient'] > 0]['gene'].tolist()
+    deg_genes_down = results_df[results_df['adj_p_value'] < 0.05][results_df['coefficient'] < 0]['gene'].tolist()
+
     # save the list of differentially expressed genes
-    with open(os.path.join(args.output, f'deg_genes_{args.cell_types[0]}vs{args.cell_types[1]}.txt'), 'w') as f:
-        for gene in deg_genes:
+    with open(os.path.join(args.output, f'deg_genes_{args.cell_types[0]}vs{args.cell_types[1]}_up.txt'), 'w') as f:
+        for gene in deg_genes_up:
+            f.write(f"{gene}\n")
+    with open(os.path.join(args.output, f'deg_genes_{args.cell_types[0]}vs{args.cell_types[1]}_down.txt'), 'w') as f:
+        for gene in deg_genes_down:
             f.write(f"{gene}\n")
     print(f"DEG analysis completed. Results saved to {args.output}")
 
