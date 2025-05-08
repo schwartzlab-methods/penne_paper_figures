@@ -33,6 +33,11 @@ def main():
     for each in args.cell_types:
         assert each in cell_types, f"Cell type {each} not found in labels"
 
+    # normalize to counts per million
+    counts = counts / np.sum(counts, axis=1, keepdims=True) * 1e6
+    # log2 transform
+    counts = np.log2(counts + 1)
+    
     # get only the cell types of interest from counts
     cell_type_mask = np.isin(cell_types, args.cell_types)
     counts = counts[cell_type_mask]
