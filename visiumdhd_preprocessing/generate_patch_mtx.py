@@ -28,9 +28,6 @@ def combine_barcodes(anndata_mtx, barcodes):
     num_transcripts = new_mtx.sum()
     new_mtx = ad.AnnData(np.array(new_mtx))
     new_mtx.var_names = anndata_mtx.var_names
-    # normalization
-    # sc.pp.normalize_total(new_mtx, target_sum=1e6)
-    # sc.pp.log1p(new_mtx)
     return new_mtx, num_transcripts
 
 def process_image(tissue_dir, dir, each, x_off, y_off, position_matrix, cell_matrix, name):
@@ -57,7 +54,10 @@ def main(dir, output, paraquet, cellranger):
         os.makedirs(img_save)
     position_matrix = pd.read_parquet(paraquet)
     cell_matrix = sc.read_10x_mtx(cellranger)
-    print("Files loaded. Start processing")
+    # normalization
+    sc.pp.normalize_total(cell_matrix, target_sum=1e6)
+    sc.pp.log1p(cell_matrix)
+    print("Files loaded and matrix normalized. Start processing")
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         for each in os.listdir(dir):
             x_off, y_off = [int(i) for i in each.split("_")[:2]]
