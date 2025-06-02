@@ -23,6 +23,7 @@ def main():
     if not os.path.exists(args.output):
         os.makedirs(args.output)
 
+    args.cell_types.sort() #sort as the alphabetical first is the reference in linear modeling
     # Load count data (rows: cells, columns: gemes)
     counts = np.load(args.counts).astype(float)
     cell_types = np.load(args.labels)
@@ -72,31 +73,34 @@ def main():
     results_df = pd.DataFrame({
         'gene': new_gene_names,
         'p_value': p_values,
-        'coefficient': coefficients
+        'log_fc': coefficients
     })
     # Adjust p-values for multiple testing
     results_df['adj_p_value'] = sm.stats.multipletests(results_df['p_value'], method='fdr_bh')[1]
-    results_df["adj_p_value < 0.05"] = (results_df['adj_p_value'] < 0.05).astype(str)
+    results_df['Adj p < 0.05 and Log2FC > 1'] = results_df.apply(lambda x: (x["adj_p_value"] < 0.05) and (np.absolute(x["log_fc"]) > 1), axis=1).astype(str)
+    # results_df["adj_p_value < 0.05"] = (results_df['adj_p_value'] < 0.05).astype(str)
     # Save results
-    results_df.to_csv(os.path.join(args.output, f'deg_{args.cell_types[0]}vs{args.cell_types[1]}.csv'), index=False)
+    results_df.to_csv(os.path.join(args.output, f'deg_ref_{args.cell_types[0]}vs{args.cell_types[1]}.csv'), index=False)
     # Plot results
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=results_df, x='coefficient', y=-np.log10(results_df['adj_p_value']), hue='adj_p_value < 0.05')
+    sns.scatterplot(data=results_df, x='log_fc', y=-np.log10(results_df['adj_p_value']), hue='Adj p < 0.05 and Log2FC > 1')
     plt.axhline(y=-np.log10(0.05), color='r', linestyle='--')
-    plt.title(f'Differential Gene Expression Analysis: {args.cell_types[0]} vs {args.cell_types[1]}')
-    plt.xlabel('Coefficient')
-    plt.ylabel('-log10(Adjusted p-value)')
-    plt.savefig(os.path.join(args.output, f'deg_plot_{args.cell_types[0]}vs{args.cell_types[1]}.png'))
+    plt.title(f'Differential Gene Expression Analysis: {args.cell_types[0]}(Reference) vs {args.cell_types[1]}')
+    plt.xlabel('Log2 FC')
+    plt.ylabel('-log10(FDR Adjusted p-value)')
+    plt.savefig(os.path.join(args.output, f'deg_plot_ref_{args.cell_types[0]}vs{args.cell_types[1]}.png'))
     plt.close()
     # get a list of differentially expressed genes
-    deg_genes_up = results_df[results_df['adj_p_value'] < 0.05][results_df['coefficient'] > 0]['gene'].tolist()
-    deg_genes_down = results_df[results_df['adj_p_value'] < 0.05][results_df['coefficient'] < 0]['gene'].tolist()
+    deg_genes_up = results_df[results_df['adj_p_value'] < 0.05]
+    deg_genes_up = deg_genes_up[deg_genes_up['log_fc'] > 1]['gene'].tolist()
+    deg_genes_down = results_df[results_df['adj_p_value'] < 0.05]
+    deg_genes_down = deg_genes_down[deg_genes_down['log_fc'] < 1]['gene'].tolist()
 
     # save the list of differentially expressed genes
-    with open(os.path.join(args.output, f'deg_genes_{args.cell_types[0]}vs{args.cell_types[1]}_up.txt'), 'w') as f:
+    with open(os.path.join(args.output, f'deg_genes_ref_{args.cell_types[0]}vs{args.cell_types[1]}_up.txt'), 'w') as f:
         for gene in deg_genes_up:
             f.write(f"{gene}\n")
-    with open(os.path.join(args.output, f'deg_genes_{args.cell_types[0]}vs{args.cell_types[1]}_down.txt'), 'w') as f:
+    with open(os.path.join(args.output, f'deg_genes_ref_{args.cell_types[0]}vs{args.cell_types[1]}_down.txt'), 'w') as f:
         for gene in deg_genes_down:
             f.write(f"{gene}\n")
     print(f"DEG analysis completed. Results saved to {args.output}")
