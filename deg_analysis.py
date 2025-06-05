@@ -85,6 +85,8 @@ def main():
     plt.figure(figsize=(10, 6))
     sns.scatterplot(data=results_df, x='log_fc', y=-np.log10(results_df['adj_p_value']), hue='Adj p < 0.05 and Log2FC > 1')
     plt.axhline(y=-np.log10(0.05), color='r', linestyle='--')
+    plt.axvline(x=1, color='r', linestyle='--')
+    plt.axvline(x=-1, color='r', linestyle='--')
     plt.title(f'Differential Gene Expression Analysis: {args.cell_types[0]}(Reference) vs {args.cell_types[1]}')
     plt.xlabel('Log2 FC')
     plt.ylabel('-log10(FDR Adjusted p-value)')
@@ -94,7 +96,7 @@ def main():
     deg_genes_up = results_df[results_df['adj_p_value'] < 0.05]
     deg_genes_up = deg_genes_up[deg_genes_up['log_fc'] > 1]['gene'].tolist()
     deg_genes_down = results_df[results_df['adj_p_value'] < 0.05]
-    deg_genes_down = deg_genes_down[deg_genes_down['log_fc'] < 1]['gene'].tolist()
+    deg_genes_down = deg_genes_down[deg_genes_down['log_fc'] < -1]['gene'].tolist()
 
     # save the list of differentially expressed genes
     with open(os.path.join(args.output, f'deg_genes_ref_{args.cell_types[0]}vs{args.cell_types[1]}_up.txt'), 'w') as f:

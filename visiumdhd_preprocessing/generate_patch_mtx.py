@@ -13,7 +13,7 @@ import concurrent.futures
 
 def find_barcodes(x1, y1, x2, y2, position_matrix) -> list:
     barcodes = position_matrix[(position_matrix['pxl_row_in_fullres'] >= x1) & (position_matrix['pxl_row_in_fullres'] <= x2) 
-                       & (position_matrix['pxl_col_in_fullres'] >= y1) & (position_matrix['pxl_col_in_fullres'] <= y2)]
+                    & (position_matrix['pxl_col_in_fullres'] >= y1) & (position_matrix['pxl_col_in_fullres'] <= y2)]
     barcodes_L = barcodes['barcode'].values
     return barcodes_L
 
@@ -52,7 +52,11 @@ def main(dir, output, paraquet, cellranger):
         os.makedirs(mtx_save)
     if not os.path.exists(img_save):
         os.makedirs(img_save)
-    position_matrix = pd.read_parquet(paraquet)
+    if paraquet.endswith(".paraquet"):
+        position_matrix = pd.read_parquet(paraquet)
+    else:
+        position_matrix = pd.read_csv(paraquet, sep=",", header=None)
+        position_matrix.columns = ['barcode', 'in_tissue', 'array_row', 'array_col', 'pxl_row_in_fullres', 'pxl_col_in_fullres']
     cell_matrix = sc.read_10x_mtx(cellranger)
     # normalization
     sc.pp.normalize_total(cell_matrix, target_sum=1e6)

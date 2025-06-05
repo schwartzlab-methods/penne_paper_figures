@@ -1,6 +1,6 @@
 import os
 import torch
-from torch.utils.data import random_split, DataLoader
+from torch.utils.data import random_split, DataLoader, ConcatDataset
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import CSVLogger
 from modules import SpaghettiGenerator
@@ -92,9 +92,9 @@ def main():
     pl.seed_everything(42, workers=True)
     # arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('--visiumhd_dir', type=str, help='Directory containing the VisiumHD patches')
+    parser.add_argument('--visiumhd_dir', type=str, nargs="+", help='Directory containing the VisiumHD patches')
     parser.add_argument('--livecell_dir', type=str, help='Directory containing the LIVECell patches')
-    parser.add_argument('--mtx_dir', type=str, help='Directory containing the mtx files')
+    parser.add_argument('--mtx_dir', type=str, nargs="+", help='Directory containing the mtx files')
     parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size for training')
@@ -104,7 +104,10 @@ def main():
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
     # create dataset
-    dataset = VisiumHD_Livecell_Dataset(args.visiumhd_dir, args.mtx_dir, args.livecell_dir)
+    dataset_L = []
+    for i in range(len(args.visiumhd_dir)):
+        dataset_L.append(VisiumHD_Livecell_Dataset(args.visiumhd_dir[i], args.mtx_dir[i], args.livecell_dir))
+    dataset = ConcatDataset(dataset_L)
     # split dataset into train and val
     train_dataset, val_dataset = random_split(dataset, [0.8, 0.2])
     # create dataloaders
@@ -117,7 +120,7 @@ def main():
     spaghetti = init_spaghetti(args.spaghetti_model)
     # start training
     train(train_loader, val_loader, 
-          num_genes=dataset.num_genes,
+          num_genes=dataset.datasets[0].num_genes,
           converter=lambda device, x: spaghetti_convertion(spaghetti, device, x),
           feature_extractor=lambda device, x: owkin_features(feature_extractor, device, image_processor, x), 
           domain_weight=args.domain_weight,
