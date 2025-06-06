@@ -1,16 +1,14 @@
 import torch
-import torch.utils
-import torch.utils.data
 import torch.nn as nn
 import modules
 import pytorch_lightning as pl
-import psutil
-import os
 
 class GeneExpPredVisiumHD(pl.LightningModule):
     def __init__(self, num_genes, 
                  converter, feature_extractor,
-                 domain_weight = 5.0, lr=1e-3):
+                 domain_weight = 5.0, 
+                 second_order_weight=0.1,
+                 lr=1e-3):
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
         self.translator = modules.Translator().to(self.device)
@@ -25,11 +23,29 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # loss functions
         self.criterion = nn.MSELoss().to(self.device)
         self.domain_criterion = nn.BCELoss().to(self.device)
+        self.coral_loss_weight = second_order_weight
+    
+    @staticmethod
+    def coral_loss(source, target):
+        """
+        Compute CORAL loss between source and target feature maps.
+        Use to align the second-order statistics of the source and target distributions.
+        """
+        d = source.size(1)  # feature dimension
+        ns = source.size(0)
+        nt = target.size(0)
 
-    def log_memory_usage(self, stage):
-        process = psutil.Process(os.getpid())
-        memory_used = process.memory_info().rss / (1024 ** 2)  # Convert bytes to MB
-        print(f"[{stage}] Memory Usage: {memory_used:.2f} MB")
+        # Source covariance
+        xm = source - source.mean(dim=0, keepdim=True)
+        xc = xm.t() @ xm / (ns - 1)
+
+        # Target covariance
+        xmt = target - target.mean(dim=0, keepdim=True)
+        xct = xmt.t() @ xmt / (nt - 1)
+
+        # Frobenius norm
+        loss = torch.mean((xc - xct) ** 2)
+        return loss / (4 * d * d)
 
     def forward(self, x, if_convert=False):
         # if_convert is used to determine whether to use the converter or not
@@ -70,14 +86,16 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         real_labels = torch.ones_like(pred_discriminator_real)
         domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                        self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+        coral_loss = self.coral_loss(he_translated, pcm_translated)
 
         # Predictor part
         exp_pred = self.predictor(he_translated)
         prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
 
         # total loss for training
-        total_loss = prediction_loss + domain_loss
-        metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item(), "train_prediction_loss": prediction_loss.item()}
+        total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
+        metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
+                   "train_prediction_loss": prediction_loss.item()}
         self.log_dict(metrics,prog_bar=True)
         return total_loss
  
@@ -100,13 +118,15 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             real_labels = torch.ones_like(pred_discriminator_real)
             domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                         self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+            coral_loss = self.coral_loss(he_translated, pcm_translated)
             # Predictor part
             exp_pred = self.predictor(he_translated)
             prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
 
             # total loss for validation
-            total_loss = prediction_loss + domain_loss
-            metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item(), "val_prediction_loss": prediction_loss.item()}
+            total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
+            metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
+                       "val_prediction_loss": prediction_loss.item()}
             self.log_dict(metrics,prog_bar=True, sync_dist=True)
 
     def configure_optimizers(self):

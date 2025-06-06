@@ -41,10 +41,10 @@ def find_checkpoint(dir: str):
         return None
     else:
         return max(files, key=os.path.getctime)
-    
+
 def train(train_loader, val_loader, 
           num_genes, converter, feature_extractor,
-          domain_weight=5.0,
+          domain_weight=5.0, coral_loss_weight=0.1,
           lr = 0.0001, save_dir = None, epochs=100, name="gene_predictor"):
     '''
     Train the gene expression prediction model using PyTorch Lightning.
@@ -69,7 +69,9 @@ def train(train_loader, val_loader,
     # create model
     lit_model = GeneExpPredVisiumHD(num_genes, 
                                     converter, feature_extractor,
-                                    domain_weight = domain_weight, lr=lr)
+                                    domain_weight = domain_weight, 
+                                    second_order_weight=coral_loss_weight,
+                                    lr=lr)
     # train model
     logger = CSVLogger(final_save_dir, name=name)
     trainer = pl.Trainer(max_epochs=epochs, devices=ngpus_per_node, num_nodes=num_nodes,
@@ -99,6 +101,7 @@ def main():
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size for training')
     parser.add_argument('--domain_weight', type=float, default=5.0, help='Domain weight for training')
+    parser.add_argument('--coral_loss_weight', type=float, default=0.1, help='Weight for the CORAL loss')
     parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate for training')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
@@ -123,7 +126,7 @@ def main():
           num_genes=dataset.datasets[0].num_genes,
           converter=lambda device, x: spaghetti_convertion(spaghetti, device, x),
           feature_extractor=lambda device, x: owkin_features(feature_extractor, device, image_processor, x), 
-          domain_weight=args.domain_weight,
+          domain_weight=args.domain_weight, coral_loss_weight=args.coral_loss_weight,
           lr=args.lr, save_dir=args.output_dir, epochs=args.epochs, name=args.name)
 
 
