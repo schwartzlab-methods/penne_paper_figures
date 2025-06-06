@@ -39,9 +39,11 @@ def main():
     feature_extractor = AutoModel.from_pretrained("/fs01/home/richarddong/.cache/huggingface/hub/phikon-v2")
     image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
     # save the gene names
-    gene_names = np.loadtxt(args.gene_names, dtype=str, delimiter='\t')
-    gene_symbols = gene_names[:,1].reshape(-1)
+    genes = np.loadtxt(args.gene_names, dtype=str, delimiter='\t')
+    gene_names = genes[:,1].reshape(-1)
+    gene_symbols = genes[:,0].reshape(-1)
     np.save(os.path.join(args.output_dir, f"{args.name}_gene_symbols.npy"), gene_symbols)
+    np.save(os.path.join(args.output_dir, f"{args.name}_gene_names.npy"), gene_names)
     print("Gene symbols saved to ", args.output_dir)
     num_genes = gene_names.shape[0]
     # prep model

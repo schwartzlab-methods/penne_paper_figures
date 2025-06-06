@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import seaborn as sns
 from scipy.cluster import hierarchy
-from torch.utils.data import random_split, DataLoader
+from torch.utils.data import random_split, DataLoader, ConcatDataset
 import pytorch_lightning as pl
 from modules import SpaghettiGenerator
 from model import GeneExpPredVisiumHD
@@ -104,9 +104,9 @@ def main():
     pl.seed_everything(42, workers=True)
     # arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('--visiumhd_dir', type=str, help='Directory containing the VisiumHD patches')
+    parser.add_argument('--visiumhd_dir', type=str, nargs="+", help='Directory containing the VisiumHD patches')
     parser.add_argument('--livecell_dir', type=str, help='Directory containing the LIVECell patches')
-    parser.add_argument('--mtx_dir', type=str, help='Directory containing the mtx files')
+    parser.add_argument('--mtx_dir', type=str, nargs="+", help='Directory containing the mtx files')
     parser.add_argument('--model_dir', type=str, help='Directory containing the model checkpoints')
     parser.add_argument('--gene_names', type=str, help='Path to the gene names feature tsv file')
     parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
@@ -114,7 +114,10 @@ def main():
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
     # create dataset
-    dataset = VisiumHD_Livecell_Dataset(args.visiumhd_dir, args.mtx_dir, args.livecell_dir)
+    dataset_L = []
+    for i in range(len(args.visiumhd_dir)):
+        dataset_L.append(VisiumHD_Livecell_Dataset(args.visiumhd_dir[i], args.mtx_dir[i], args.livecell_dir))
+    dataset = ConcatDataset(dataset_L)
     # split dataset into train and val
     _, val_dataset = random_split(dataset, [0.8, 0.2])
     # create dataloaders
@@ -122,7 +125,7 @@ def main():
     # create feature extractor
     feature_extractor = AutoModel.from_pretrained("/fs01/home/richarddong/.cache/huggingface/hub/phikon-v2")
     image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
-    model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_dir, num_genes = dataset.num_genes, 
+    model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_dir, num_genes = dataset.datasets[0].num_genes, 
                                 converter = lambda device, x: spaghetti_convertion(init_spaghetti(args.spaghetti_model), device, x), 
                                 feature_extractor = lambda device, x: owkin_features(feature_extractor, device, image_processor, x))
     model.freeze()

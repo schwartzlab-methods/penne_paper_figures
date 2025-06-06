@@ -61,13 +61,16 @@ def main():
         # Create the design matrix
         X = sm.add_constant(pd.get_dummies(gene_df['cell_type'], drop_first=True)).astype(float)
         y = gene_df[gene].astype(float)
+        # combine all the genes in y if there are multiple with the same name
+        if len(y.shape) != 1:
+            y = y.mean(axis=1)
         # Fit a linear model
         model = sm.OLS(y, X, missing="drop")
         results.append(model.fit())
 
     # Extract p-values and coefficients
-    p_values = [result.pvalues[1] for result in results]
-    coefficients = [result.params[1] for result in results]
+    p_values = [result.pvalues.iloc[1] for result in results]
+    coefficients = [result.params.iloc[1] for result in results]
     print("Final number of genes analyzed: ", len(new_gene_names))
     # Create a DataFrame for the results
     results_df = pd.DataFrame({
@@ -77,7 +80,7 @@ def main():
     })
     # Adjust p-values for multiple testing
     results_df['adj_p_value'] = sm.stats.multipletests(results_df['p_value'], method='fdr_bh')[1]
-    results_df['Adj p < 0.05 and Log2FC > 1'] = results_df.apply(lambda x: (x["adj_p_value"] < 0.05) and (np.absolute(x["log_fc"]) > 1), axis=1).astype(str)
+    results_df['Adj p < 0.05 and |Log2FC| > 1'] = results_df.apply(lambda x: (x["adj_p_value"] < 0.05) and (np.absolute(x["log_fc"]) > 1), axis=1).astype(str)
     # results_df["adj_p_value < 0.05"] = (results_df['adj_p_value'] < 0.05).astype(str)
     # Save results
     results_df.to_csv(os.path.join(args.output, f'deg_ref_{args.cell_types[0]}vs{args.cell_types[1]}.csv'), index=False)
