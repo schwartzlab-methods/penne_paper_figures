@@ -86,7 +86,7 @@ def main():
     results_df.to_csv(os.path.join(args.output, f'deg_ref_{args.cell_types[0]}vs{args.cell_types[1]}.csv'), index=False)
     # Plot results
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=results_df, x='log_fc', y=-np.log10(results_df['adj_p_value']), hue='Adj p < 0.05 and Log2FC > 1')
+    sns.scatterplot(data=results_df, x='log_fc', y=-np.log10(results_df['adj_p_value']), hue='Adj p < 0.05 and |Log2FC| > 1')
     plt.axhline(y=-np.log10(0.05), color='r', linestyle='--')
     plt.axvline(x=1, color='r', linestyle='--')
     plt.axvline(x=-1, color='r', linestyle='--')

@@ -137,9 +137,10 @@ def main():
     features_pcm_L = []
     features_pcm_non_translate_L = []
     features_pcm_non_convert_L = []
+    img_path_L = []
     with torch.no_grad():
         for batch in tqdm(val_loader, total=len(val_loader)):
-            he_image, mtx, pcm = batch
+            he_image, mtx, pcm, image_path = batch
             pred_exp = model.forward(he_image, if_convert=False)
             # compute some features
             features_he = model.compute_feature(he_image, if_convert=False, if_translate=True)
@@ -156,6 +157,7 @@ def main():
             features_pcm_L.append(features_pcm.cpu().numpy())
             features_pcm_non_translate_L.append(features_pcm_non_translate.cpu().numpy())
             features_pcm_non_convert_L.append(features_pcm_non_convert.cpu().numpy())
+            img_path_L.append(image_path[0])
     pred = np.concatenate(pred_L, axis=0)
     true = np.concatenate(gt_L, axis=0)
     he_features_translated = np.concatenate(features_he_L, axis=0)
@@ -163,6 +165,7 @@ def main():
     pcm_features_translated = np.concatenate(features_pcm_L, axis=0)
     pcm_features_non_translated = np.concatenate(features_pcm_non_translate_L, axis=0)
     pcm_features_non_converted  = np.concatenate(features_pcm_non_convert_L, axis=0)
+    imgs = np.array(img_path_L)
     print(f"Final prediction shape: {pred.shape}") # spots x features
     print("Finished generating predictions")
 
@@ -174,6 +177,7 @@ def main():
     np.save(os.path.join(args.output_dir, "pcm_features_translated.npy"), pcm_features_translated)
     np.save(os.path.join(args.output_dir, "pcm_features_non_translated.npy"), pcm_features_non_translated)
     np.save(os.path.join(args.output_dir, "pcm_features_non_converted.npy"), pcm_features_non_converted)
+    np.save(os.path.join(args.output_dir, "image_names.npy"), imgs)
 
     #! across spots correlation
     corr = np.zeros(pred.shape[0])

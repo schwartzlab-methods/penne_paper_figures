@@ -65,7 +65,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return x
 
     def training_step(self, batch, batch_idx):
-        he_image, mtx, pcm_image = batch
+        he_image, mtx, pcm_image, _ = batch
         self.translator.train()
         self.domain_discriminator.train()
         self.predictor.train()
@@ -100,7 +100,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return total_loss
  
     def validation_step(self, batch, batch_idx):
-        he_image, mtx, pcm_image = batch
+        he_image, mtx, pcm_image, _ = batch
         self.translator.eval()
         self.domain_discriminator.eval()
         self.predictor.eval()

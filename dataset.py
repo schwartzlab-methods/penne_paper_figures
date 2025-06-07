@@ -189,7 +189,7 @@ class VisiumHD_Livecell_Dataset(Dataset):
         livecell_path = np.random.choice(self.livecell_path)
         livecell_img = Image.open(livecell_path).convert('RGB')
         livecell_img = self.pcm_transforms(livecell_img) / 255 # scale to [0,1]
-        return image, mtx_tensor, livecell_img
+        return image, mtx_tensor, livecell_img, image_path
     
     @staticmethod
     def _find_all_files(path):
