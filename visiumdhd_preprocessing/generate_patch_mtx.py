@@ -52,7 +52,7 @@ def main(dir, output, paraquet, cellranger):
         os.makedirs(mtx_save)
     if not os.path.exists(img_save):
         os.makedirs(img_save)
-    if paraquet.endswith(".paraquet"):
+    if paraquet.endswith(".parquet"):
         position_matrix = pd.read_parquet(paraquet)
     else:
         position_matrix = pd.read_csv(paraquet, sep=",", header=None)
