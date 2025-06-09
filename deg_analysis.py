@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
 from tqdm import tqdm
+from cmapPy.pandasGEXpress.parse_gct import parse
 
 def main():
     # Set up argument parser
@@ -19,6 +20,7 @@ def main():
     parser.add_argument('--genes', type=str, required=True, help='Path to the gene names npy file')
     parser.add_argument('--cell_types', type=str, required=True, nargs="+", help='The two cell types to compare')
     parser.add_argument('--output', type=str, required=True, help='Output directory for results')
+    parser.add_argument('--gt', type=str, default=None, help='Path to the ground truth RNA seq .gct file (optional)')
     args = parser.parse_args()
     if not os.path.exists(args.output):
         os.makedirs(args.output)
@@ -33,6 +35,33 @@ def main():
     assert len(args.cell_types) == 2, "Please provide exactly two cell types for comparison"
     for each in args.cell_types:
         assert each in cell_types, f"Cell type {each} not found in labels"
+    
+    if args.gt is not None:
+        # compute the ground truth gene expression
+        gt_data = parse(args.gt).data_df
+        gt_data.index = [x.split(".")[0] for x in gt_data.index]  # remove the version number from gene names
+        gt_data.columns = [x.split("_")[0].lower() for x in gt_data.columns]  # get cell names
+
+        # check if the ground truth data has the two cell types
+        if not all(cell.lower() in gt_data.columns for cell in args.cell_types):
+            print(f"Ground truth data does not contain the specified cell types: {args.cell_types}.")
+            print("Will proceed without ground truth data.")
+        else:
+            # process the ground truth data
+            # filter to only have the two cell types
+            gt_data = gt_data.loc[:, [cell.lower() for cell in args.cell_types]]
+            # select only the genes that are in the intersection of gt and gene_names
+            common_genes = list(set(gt_data.index).intersection(set(gene_names)))
+            # filter the gene names
+            gene_names = [gene if gene in common_genes else None for gene in gene_names]
+            order = [gene for gene in gene_names if gene in common_genes]
+            gt_data = gt_data.loc[order, :]  # filter to only have the common genes
+            # sort the ground truth data by gene names
+            gt_data = gt_data.reindex(order)
+            # normalize to counts per million and log2 transform
+            gt_data = gt_data / np.sum(gt_data, axis=0) * 1e6
+            gt_data = np.log2(gt_data + 1)
+            l2fc_gt = (gt_data[args.cell_types[1].lower()] - gt_data[args.cell_types[0].lower()]).to_numpy()
 
     # normalize to counts per million
     counts = counts / np.sum(counts, axis=1, keepdims=True) * 1e6
@@ -51,6 +80,8 @@ def main():
     results = []
     new_gene_names = []
     for gene in tqdm(gene_names):
+        if gene is None:
+            continue
         # Create a DataFrame for the current gene
         gene_df = counts_df[[gene]].copy()
         if (0 == gene_df.to_numpy()).all():
@@ -73,15 +104,24 @@ def main():
     coefficients = [result.params.iloc[1] for result in results]
     print("Final number of genes analyzed: ", len(new_gene_names))
     # Create a DataFrame for the results
-    results_df = pd.DataFrame({
-        'gene': new_gene_names,
-        'p_value': p_values,
-        'log_fc': coefficients
-    })
+    if args.gt is not None:
+        # add the ground truth log2 fold change to the results
+        results_df = pd.DataFrame({
+            'gene': new_gene_names,
+            'p_value': p_values,
+            'log_fc': coefficients,
+            'log_fc_gt': l2fc_gt,
+            "correct_dir": ["Same" if np.sign(coeff) == np.sign(gt) else "Different" for coeff, gt in zip(coefficients, l2fc_gt)]
+        })
+    else:
+        results_df = pd.DataFrame({
+            'gene': new_gene_names,
+            'p_value': p_values,
+            'log_fc': coefficients
+        })
     # Adjust p-values for multiple testing
     results_df['adj_p_value'] = sm.stats.multipletests(results_df['p_value'], method='fdr_bh')[1]
     results_df['Adj p < 0.05 and |Log2FC| > 1'] = results_df.apply(lambda x: (x["adj_p_value"] < 0.05) and (np.absolute(x["log_fc"]) > 1), axis=1).astype(str)
-    # results_df["adj_p_value < 0.05"] = (results_df['adj_p_value'] < 0.05).astype(str)
     # Save results
     results_df.to_csv(os.path.join(args.output, f'deg_ref_{args.cell_types[0]}vs{args.cell_types[1]}.csv'), index=False)
     # Plot results
@@ -109,6 +149,14 @@ def main():
         for gene in deg_genes_down:
             f.write(f"{gene}\n")
     print(f"DEG analysis completed. Results saved to {args.output}")
+    if args.gt is not None:
+        # create a bar plot of the correct direction of the log2 fold change
+        plt.figure(figsize=(10, 6))
+        sns.countplot(data=results_df, x='correct_dir')
+        plt.title(f'Correct Direction of Log2 FC: {args.cell_types[0]} vs {args.cell_types[1]}')
+        plt.xlabel('Correct Direction')
+        plt.ylabel('Count')
+        plt.savefig(os.path.join(args.output, f'correct_direction_ref_{args.cell_types[0]}vs{args.cell_types[1]}.png'))
 
 if __name__ == "__main__":
     main()
