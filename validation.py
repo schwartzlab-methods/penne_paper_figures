@@ -193,8 +193,14 @@ def main():
         title="Correlation of predicted vs ground truth expression across spots"
     ).interactive()
     chart.save(os.path.join(args.output_dir, f"correlation_spots_hist_{args.name}.html"))
+    spot_corr_df = pd.DataFrame({
+        "image_add": imgs,
+        "correlation": corr
+    })
+    spot_corr_df.to_csv(os.path.join(args.output_dir, f'spot_correlation_{args.name}.csv'))
 
     #! across genes correlation
+    gene_names = pd.read_csv(args.gene_names, sep="\t", header = None)[0].values
     corr = np.zeros(pred.shape[1])
     for i in range(pred.shape[1]):
         corr[i] = np.corrcoef(pred[:,i], true[:,i],)[0,1] #corrcoef returns a matrix
@@ -208,9 +214,13 @@ def main():
         title="Correlation of predicted vs ground truth expression across genes"
     ).interactive()
     chart.save(os.path.join(args.output_dir, f"correlation_hist_genes_{args.name}.html"))
+    gene_corr_df = pd.DataFrame({
+        "gene_name": gene_names,
+        "correlation": corr
+    })
+    gene_corr_df.to_csv(os.path.join(args.output_dir, f'gene_correlation_{args.name}.csv'))
 
     ## gene analysis
-    gene_names = pd.read_csv(args.gene_names, sep="\t", header = None)[0].values
     adata_raw = sc.AnnData(true)
     adata_raw.var_names = gene_names
     print(f"Shape of raw adata: {adata_raw.shape}")
