@@ -6,28 +6,36 @@ import pytorch_lightning as pl
 class GeneExpPredVisiumHD(pl.LightningModule):
     def __init__(self, num_genes, 
                  converter, feature_extractor,
+                 num_cell_types,
                  domain_weight = 5.0, 
                  second_order_weight=0.1,
+                 cell_type_weight=0.001,
                  lr=1e-3):
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
         self.translator = modules.Translator().to(self.device)
         self.domain_discriminator = modules.DomainDiscriminator(alpha=domain_weight).to(self.device)
         self.predictor = modules.Predictor(input_size=1024, hidden_size=4056, output_size=num_genes).to(self.device)
+        self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, output_size=num_cell_types).to(self.device)
         # feature extractors
         self.feature_extractor = feature_extractor
         self.converter = converter
         # hyperparameters
         self.lr = lr
         self.domain_weight = domain_weight
+        self.coral_loss_weight = second_order_weight
+        self.cell_type_weight = cell_type_weight
         # loss functions
         self.criterion = nn.MSELoss().to(self.device)
         self.domain_criterion = nn.BCELoss().to(self.device)
-        self.coral_loss_weight = second_order_weight
+        self.cell_type_criterion = nn.CrossEntropyLoss().to(self.device)
+        
+        self.save_hyperparameters(ignore=["converter", "feature_extractor"])
     
     @staticmethod
     def coral_loss(source, target):
         """
+        CORAL = covariance alignment
         Compute CORAL loss between source and target feature maps.
         Use to align the second-order statistics of the source and target distributions.
         """
@@ -65,7 +73,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return x
 
     def training_step(self, batch, batch_idx):
-        he_image, mtx, pcm_image, _ = batch
+        he_image, mtx, pcm_image, _, cell_type = batch
         self.translator.train()
         self.domain_discriminator.train()
         self.predictor.train()
@@ -92,15 +100,19 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         exp_pred = self.predictor(he_translated)
         prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
 
+        # cell type classification part
+        cell_type_pred = self.cell_type_classifier(pcm_translated)
+        cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
+
         # total loss for training
         total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
         metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                   "train_prediction_loss": prediction_loss.item()}
+                   "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item()}
         self.log_dict(metrics,prog_bar=True)
         return total_loss
  
     def validation_step(self, batch, batch_idx):
-        he_image, mtx, pcm_image, _ = batch
+        he_image, mtx, pcm_image, _, cell_type = batch
         self.translator.eval()
         self.domain_discriminator.eval()
         self.predictor.eval()
@@ -122,6 +134,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # Predictor part
             exp_pred = self.predictor(he_translated)
             prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
+            # cell type classification part
+            cell_type_pred = self.cell_type_classifier(pcm_translated)
+            cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
             # total loss for validation
             total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss

@@ -157,3 +157,22 @@ class SpaghettiGenerator(nn.Module):
         x = self.up(x)
         x = self.out(x)
         return x
+
+class CellTypeClassifier(nn.Module):
+    '''
+    Classify the cell types from gene expression features.
+    This is used to guide the training of the predictor to better at predicting the gene expression of the pcm
+    This is a simple feedforward neural network with two fully connected layers. 
+    No softmax activation is applied since it is used in a loss function that applies softmax internally (e.g., CrossEntropyLoss).
+    '''
+    def __init__(self, input_size, num_classes, hidden_size = 512):
+        super(CellTypeClassifier, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, num_classes)
+        self.dropout = nn.Dropout(0.2)  # Dropout layer to prevent overfitting
+        
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return x

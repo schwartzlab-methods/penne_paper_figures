@@ -44,6 +44,7 @@ def find_checkpoint(dir: str):
 
 def train(train_loader, val_loader, 
           num_genes, converter, feature_extractor,
+          num_cell_types, cell_type_loss_weight=0.0,
           domain_weight=5.0, coral_loss_weight=0.1,
           lr = 0.0001, save_dir = None, epochs=100, name="gene_predictor"):
     '''
@@ -69,8 +70,10 @@ def train(train_loader, val_loader,
     # create model
     lit_model = GeneExpPredVisiumHD(num_genes, 
                                     converter, feature_extractor,
+                                    num_cell_types,
                                     domain_weight = domain_weight, 
                                     second_order_weight=coral_loss_weight,
+                                    cell_type_weight=cell_type_loss_weight,
                                     lr=lr)
     # train model
     logger = CSVLogger(final_save_dir, name=name)
@@ -104,6 +107,7 @@ def main():
     parser.add_argument('--coral_loss_weight', type=float, default=0.1, help='Weight for the CORAL loss')
     parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate for training')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training')
+    parser.add_argument('--cell_type_loss_weight', type=float, default=0, help='Weight for the cell type loss')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
     # create dataset
@@ -116,6 +120,7 @@ def main():
     # create dataloaders
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    print("Data loader created")
     # create feature extractor
     feature_extractor = AutoModel.from_pretrained("/fs01/home/richarddong/.cache/huggingface/hub/phikon-v2")
     image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
@@ -124,6 +129,8 @@ def main():
     # start training
     train(train_loader, val_loader, 
           num_genes=dataset.datasets[0].num_genes,
+          num_cell_types=dataset.datasets[0].num_pcm_classes,
+          cell_type_loss_weight=args.cell_type_loss_weight,
           converter=lambda device, x: spaghetti_convertion(spaghetti, device, x),
           feature_extractor=lambda device, x: owkin_features(feature_extractor, device, image_processor, x), 
           domain_weight=args.domain_weight, coral_loss_weight=args.coral_loss_weight,

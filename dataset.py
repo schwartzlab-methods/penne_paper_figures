@@ -40,7 +40,7 @@ class LiveCellDataset(Dataset):
         self.transform = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32),
-            v2.RandomCrop((64,64)),
+            v2.RandomCrop((256,256)),
             v2.Resize((256, 256)),
         ])
         self._write_attributes() # this will write class_to_idx and targets
@@ -156,7 +156,10 @@ class VisiumHD_Livecell_Dataset(Dataset):
         self.mtx_dir = mtx_dir
         self.imgs = np.array(os.listdir(tissue_dir))
         self.mtxs = np.array(os.listdir(mtx_dir))
-        self.livecell_path = np.array(self._find_all_files(livecell_dir))
+        self.livecell_path = []
+        self.livecell_classes = [] #classes are string labels of the cell types
+        self._write_attributes(livecell_dir)
+        # self.livecell_path = np.array(self._find_all_files(livecell_dir))
         # transformations
         self.he_transforms = v2.Compose([
             v2.ToImage(),
@@ -166,30 +169,32 @@ class VisiumHD_Livecell_Dataset(Dataset):
         self.pcm_transforms = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32),
-            v2.RandomCrop((64,64)),
+            v2.RandomCrop((256,256)),
             v2.Resize((256, 256)),
         ])
         # get the number of genes from the mtx file
         mtx = np.load(os.path.join(mtx_dir, self.mtxs[0]))
         self.num_genes = mtx.shape[1]
+        # get the total number of pcm classes
+        self.num_pcm_classes = len(self.livecell_class_count_dict)
 
     def __len__(self):
         return self.imgs.size
     
     def __getitem__(self, idx):
         name = self.imgs[idx].split(".")[0]
-        image_path = os.path.join(self.tissue_dir, f"{name}.png")
+        he_image_path = os.path.join(self.tissue_dir, f"{name}.png")
         mtx_path = os.path.join(self.mtx_dir, f"{name}.npy")
-        image = Image.open(image_path).convert('RGB')
+        image = Image.open(he_image_path).convert('RGB')
         mtx = np.load(mtx_path)
         # put in tensor
         image = self.he_transforms(image) / 255 # scale to [0,1]
         mtx_tensor = torch.tensor(mtx).float().view(-1)
         # select a random image from the livecell dataset
-        livecell_path = np.random.choice(self.livecell_path)
+        livecell_path = self.livecell_path[idx % len(self.livecell_path)]
         livecell_img = Image.open(livecell_path).convert('RGB')
         livecell_img = self.pcm_transforms(livecell_img) / 255 # scale to [0,1]
-        return image, mtx_tensor, livecell_img, image_path
+        return image, mtx_tensor, livecell_img, he_image_path, torch.Tensor([self.livecell_class_to_idx[self.livecell_classes[idx % len(self.livecell_classes)]]])
     
     @staticmethod
     def _find_all_files(path):
@@ -198,3 +203,16 @@ class VisiumHD_Livecell_Dataset(Dataset):
             for file in files:
                 all_files.append(os.path.join(root, file))
         return all_files
+    
+    def _write_attributes(self, livecell_dir):
+        for path in livecell_dir:
+            all_cls = [x for x in os.listdir(path) if os.path.isdir(os.path.join(path, x))]
+            for cls in all_cls:
+                imgs = [os.path.join(root, img) for root, _, imgs in os.walk(os.path.join(path, cls)) for img in imgs]
+                self.livecell_path.extend(imgs)
+                self.livecell_classes.extend([cls]*len(imgs))
+        # get the class to idx mapping
+        self.livecell_class_to_idx = {cls: i for i, cls in enumerate(np.unique(self.classes).tolist())}
+        self.livecell_targets = [self.class_to_idx[x] for x in self.classes] # targets are the class indices
+        assert len(self.images) == len(self.targets) == len(self.classes)
+        self.livecell_class_count_dict = {k: self.classes.count(k) for k in np.unique(self.classes)}
