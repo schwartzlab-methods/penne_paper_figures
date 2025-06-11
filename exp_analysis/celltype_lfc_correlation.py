@@ -53,7 +53,7 @@ def main():
     plt.title('Spearman correlation across genes')
     plt.savefig(os.path.join(args.output, "spearman_per_gene.png"))
 
-    df_gene.to_csv(os.path.join(args.output, "gene_wise_correlation.png"))
+    df_gene.to_csv(os.path.join(args.output, "gene_wise_correlation.csv"))
     high_spearman_genes = df_gene[df_gene['spearman_cross_samples'] > 0.5]['gene'].tolist()
     print(f"Number of genes with high Spearman correlation: {len(high_spearman_genes)}")
     with open(os.path.join(args.output, "high_spearman_genes.txt"), "w") as f:
