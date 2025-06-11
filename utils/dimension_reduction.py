@@ -6,6 +6,8 @@ import umap
 import argparse
 import os
 import altair as alt
+from toomanycells import TooManyCells as tmc
+import anndata as ad
 ## plotting settings
 if True:  # In order to bypass isort when saving
     from altairThemes import altairThemes
@@ -13,11 +15,11 @@ alt.themes.register("publishTheme", altairThemes.publishTheme)
 alt.themes.enable("publishTheme")
 
 def plot_umap(data, labels, save_dir, exp_name, extractor,
-              n_neighbors=50,metric="cosine"):
+              n_neighbors=5,min_dist=0.01,metric="cosine"):
     '''
     Plot the umap of the data
     '''
-    reducer = umap.UMAP(n_neighbors=n_neighbors, metric=metric)
+    reducer = umap.UMAP(n_neighbors=n_neighbors,min_dist=min_dist,metric=metric)
     embedding = reducer.fit_transform(data)
     plt.figure(figsize=(10, 10))
     # generate colours
@@ -34,6 +36,14 @@ def plot_umap(data, labels, save_dir, exp_name, extractor,
     plt.legend(handles=handles, title="Classes")
     plt.savefig(os.path.join(save_dir, f"umap_{exp_name}_{n_neighbors}_{extractor}.png"))
     plt.close()
+
+def tmc_plot(data, labels, save_dir):
+    adata = ad.AnnData(X=data, obs=pd.DataFrame({"cell_type": labels.tolist()}))
+    tmc_obj = tmc(adata, os.path.join(save_dir, "tmc_output"))
+    tmc_obj.run_spectral_clustering()
+    tmc_obj.store_outputs(
+        cell_ann_col="cell_type",
+    )
 
 def prepare_data(data, labels):
     '''
@@ -60,14 +70,17 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
     original, cell_type = prepare_data(path_1, path_label)
 
     print("Numpy files loaded")
-    print(original.shape)
-    print(cell_type.shape)
+    print("Feature Shape:", original.shape)
+    print("Cell type Shape:",cell_type.shape)
 
     # map cell type names to numbers
     cell_type_dict = {}
     for i, cell in enumerate(np.unique(cell_type)):
         cell_type_dict[cell] = i
     cell_type_num = [cell_type_dict[cell] for cell in cell_type]
+
+    # TMC
+    tmc_plot(original,cell_type,save_dir)
 
     # pca
     pca = PCA(n_components=50)
