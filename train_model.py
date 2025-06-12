@@ -9,6 +9,7 @@ from dataset import VisiumHD_Livecell_Dataset
 from transformers import AutoImageProcessor, AutoModel
 import argparse
 from _feature_extractors import owkin_features, spaghetti_convertion
+from tqdm import tqdm
 
 def init_spaghetti(model_path: str) -> torch.nn.Module:
     '''
@@ -98,7 +99,7 @@ def main():
     # arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--visiumhd_dir', type=str, nargs="+", help='Directory containing the VisiumHD patches')
-    parser.add_argument('--livecell_dir', type=str, help='Directory containing the LIVECell patches')
+    parser.add_argument('--livecell_dir', type=str, nargs="+", help='Directory containing the LIVECell patches')
     parser.add_argument('--mtx_dir', type=str, nargs="+", help='Directory containing the mtx files')
     parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
     parser.add_argument('--output_dir', type=str, help='Output directory')
@@ -110,9 +111,12 @@ def main():
     parser.add_argument('--cell_type_loss_weight', type=float, default=0, help='Weight for the cell type loss')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
+    print("Starting the training script with the following arguments:")
+    print(args)
+
     # create dataset
     dataset_L = []
-    for i in range(len(args.visiumhd_dir)):
+    for i in tqdm(range(len(args.visiumhd_dir))):
         dataset_L.append(VisiumHD_Livecell_Dataset(args.visiumhd_dir[i], args.mtx_dir[i], args.livecell_dir))
     dataset = ConcatDataset(dataset_L)
     # split dataset into train and val

@@ -16,7 +16,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.translator = modules.Translator().to(self.device)
         self.domain_discriminator = modules.DomainDiscriminator(alpha=domain_weight).to(self.device)
         self.predictor = modules.Predictor(input_size=1024, hidden_size=4056, output_size=num_genes).to(self.device)
-        self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, output_size=num_cell_types).to(self.device)
+        self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types).to(self.device)
         # feature extractors
         self.feature_extractor = feature_extractor
         self.converter = converter
@@ -101,11 +101,11 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
 
         # cell type classification part
-        cell_type_pred = self.cell_type_classifier(pcm_translated)
+        cell_type_pred = self.cell_type_classifier(self.predictor(pcm_translated))
         cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
         # total loss for training
-        total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
+        total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss
         metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
                    "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item()}
         self.log_dict(metrics,prog_bar=True)
@@ -135,13 +135,13 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             exp_pred = self.predictor(he_translated)
             prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
             # cell type classification part
-            cell_type_pred = self.cell_type_classifier(pcm_translated)
+            cell_type_pred = self.cell_type_classifier(self.predictor(pcm_translated))
             cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
             # total loss for validation
-            total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
+            total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss 
             metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                       "val_prediction_loss": prediction_loss.item()}
+                       "val_prediction_loss": prediction_loss.item(),"val_cell_type_loss": cell_type_loss.item()}
             self.log_dict(metrics,prog_bar=True, sync_dist=True)
 
     def configure_optimizers(self):

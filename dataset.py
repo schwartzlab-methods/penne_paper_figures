@@ -194,7 +194,7 @@ class VisiumHD_Livecell_Dataset(Dataset):
         livecell_path = self.livecell_path[idx % len(self.livecell_path)]
         livecell_img = Image.open(livecell_path).convert('RGB')
         livecell_img = self.pcm_transforms(livecell_img) / 255 # scale to [0,1]
-        return image, mtx_tensor, livecell_img, he_image_path, torch.Tensor([self.livecell_class_to_idx[self.livecell_classes[idx % len(self.livecell_classes)]]])
+        return image, mtx_tensor, livecell_img, he_image_path, self.livecell_class_to_idx[self.livecell_classes[idx % len(self.livecell_classes)]]
     
     @staticmethod
     def _find_all_files(path):
@@ -212,7 +212,7 @@ class VisiumHD_Livecell_Dataset(Dataset):
                 self.livecell_path.extend(imgs)
                 self.livecell_classes.extend([cls]*len(imgs))
         # get the class to idx mapping
-        self.livecell_class_to_idx = {cls: i for i, cls in enumerate(np.unique(self.classes).tolist())}
-        self.livecell_targets = [self.class_to_idx[x] for x in self.classes] # targets are the class indices
-        assert len(self.images) == len(self.targets) == len(self.classes)
-        self.livecell_class_count_dict = {k: self.classes.count(k) for k in np.unique(self.classes)}
+        self.livecell_class_to_idx = {cls: i for i, cls in enumerate(np.unique(self.livecell_classes).tolist())}
+        self.livecell_targets = [self.livecell_class_to_idx[x] for x in self.livecell_classes] # targets are the class indices
+        assert len(self.livecell_path) == len(self.livecell_targets) == len(self.livecell_classes)
+        self.livecell_class_count_dict = {k: self.livecell_classes.count(k) for k in np.unique(self.livecell_classes)}
