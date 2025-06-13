@@ -47,7 +47,7 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         background_scores = module_score[~is_target]
 
         # Mann-Whitney U test (non-parametric)
-        _, pval = mannwhitneyu(target_scores, background_scores, alternative='greater')
+        _, pval = mannwhitneyu(target_scores, background_scores)
 
         # Record result
         results.append({
@@ -61,7 +61,7 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         results_df = pd.DataFrame(results)
         results_df["FDR"] = results_df["p_value"] * len(results_df)  # Bonferroni correction
         
-        # Optional: plot violin plot
+        # plot violin plot
         plt.figure(figsize=(4, 4))
         sns.violinplot(
             x=label_series.isin([cell_type]).map({True: cell_type, False: "Other"}),
@@ -75,7 +75,7 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         plt.savefig(os.path.join(out, f"{cell_type}_gene_set_mean_exp.png"))
 
     results_df = pd.DataFrame(results)
-    results_df.to_csv(os.path.join(out, "up_gene_set.csv"))
+    results_df.to_csv(os.path.join(out, "gene_set_enrichment.csv"))
 
 def main():
     parser = argparse.ArgumentParser()
@@ -91,6 +91,10 @@ def main():
         os.makedirs(args.output)
 
     expression_matrix = np.load(args.expression_npy)
+    # normalize to counts per million
+    expression_matrix = expression_matrix / np.sum(expression_matrix, axis=1, keepdims=True) * 1e6
+    # # log2 transform
+    # expression_matrix = np.log2(cexpression_matrixounts + 1)
     gene_names = np.load(args.gene_names)
     cell_labels = [cell.lower() for cell in np.load(args.cell_names).tolist()]
     celltype_of_interest = [cell.lower() for cell in args.cell_types]

@@ -158,6 +158,7 @@ class SpaghettiGenerator(nn.Module):
         x = self.out(x)
         return x
 
+#! PCM specific modules for aligning generating pcm predictions
 class CellTypeClassifier(nn.Module):
     '''
     Classify the cell types from gene expression features.

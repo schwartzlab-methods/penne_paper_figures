@@ -10,6 +10,7 @@ from transformers import AutoImageProcessor, AutoModel
 import argparse
 from _feature_extractors import owkin_features, spaghetti_convertion
 from tqdm import tqdm
+import pandas as pd
 
 def init_spaghetti(model_path: str) -> torch.nn.Module:
     '''
@@ -42,10 +43,24 @@ def find_checkpoint(dir: str):
         return None
     else:
         return max(files, key=os.path.getctime)
+        
+def read_tsv(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        lines = [line.strip().split('\t') for line in f]
+    df = pd.DataFrame(lines).T #number of genes x number of cells
+    df.columns = [cell.lower() for cell in df.iloc[0].tolist()]  # set the first row as header
+    df = df[2:]  # remove the first row
+    return df
 
 def train(train_loader, val_loader, 
           num_genes, converter, feature_extractor,
-          num_cell_types, cell_type_loss_weight=0.0,
+          num_cell_types, 
+          up_marker_genes=None,
+          gene_names=None,
+          pcm_cell_to_idx=None,
+          celltypes=None,
+          cell_type_loss_weight=0.0,
+          marker_gene_loss_weight=0,
           domain_weight=5.0, coral_loss_weight=0.1,
           lr = 0.0001, save_dir = None, epochs=100, name="gene_predictor"):
     '''
@@ -68,12 +83,39 @@ def train(train_loader, val_loader,
         final_save_dir = os.getcwd()
     else:
         final_save_dir = save_dir
+    if up_marker_genes:
+        print("Attempting to start Stage Two training")
+        celltype_of_interest = [x.lower() for x in celltypes]
+        pcm_cell_to_idx_lower = {k.lower(): v for k, v in pcm_cell_to_idx.items()}
+        signature = read_tsv(up_marker_genes)
+        # convert the signature from gene names to gene symbols
+        template = pd.read_csv(gene_names, sep='\t', header=None)
+        feature_names = template.iloc[:, 0].tolist()
+        # print(feature_names)
+        name_to_symbol = {row[1]: row[0] for _, row in template.iterrows()}  # map from gene name to gene symbol
+        # convert the signature to gene symbols by mapping the dataframe
+        signature = signature.map(lambda x: name_to_symbol.get(x, x))  # map gene names to symbols
+        # select only the cell type of interest
+        enriched_gene_sets_name = {
+            pcm_cell_to_idx_lower[celltype]: signature[celltype].dropna().tolist() for celltype in celltype_of_interest if celltype in signature.columns
+        }
+        # convert to a list of indices
+        enriched_gene_sets = {
+            celltype: [1 if gene in enriched_genes else 0 for gene in feature_names]
+            for celltype, enriched_genes in enriched_gene_sets_name.items()
+        }
+    else:
+        enriched_gene_sets = None
+        feature_names = None
+
     # create model
     lit_model = GeneExpPredVisiumHD(num_genes, 
                                     converter, feature_extractor,
                                     num_cell_types,
+                                    up_marker_genes=enriched_gene_sets,
                                     domain_weight = domain_weight, 
                                     second_order_weight=coral_loss_weight,
+                                    marker_gene_weight=marker_gene_loss_weight,
                                     cell_type_weight=cell_type_loss_weight,
                                     lr=lr)
     # train model
@@ -87,9 +129,11 @@ def train(train_loader, val_loader,
     ckpt = find_checkpoint(final_save_dir)
     if ckpt:
         print("Checkpoint found. Resuming from ", ckpt)
+        checkpoint = torch.load(ckpt, map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+        lit_model.load_state_dict(checkpoint["state_dict"], strict=False)  # Fuzzy loading due to different training stage
     else:
-        print("Starting from epoch 0")
-    trainer.fit(lit_model, train_loader, val_loader, None, ckpt)
+        print("Starting from epoch 0")       
+    trainer.fit(lit_model, train_loader, val_loader, None)
     print("Training ended.")
 
 def main():
@@ -109,6 +153,10 @@ def main():
     parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate for training')
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs for training')
     parser.add_argument('--cell_type_loss_weight', type=float, default=0, help='Weight for the cell type loss')
+    parser.add_argument('--marker_gene_loss_weight', type=float, default=0, help='Weight for the marker gene loss')
+    parser.add_argument('--gene_names', type=str, default=None, help="Path to the tsv storing the list of gene names")
+    parser.add_argument('--up_marker_genes', type=str, default=None, 
+                            help='Path to up marker genes for PCM cell type. If supplied, stage two training will be performed.')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
     print("Starting the training script with the following arguments:")
@@ -134,7 +182,12 @@ def main():
     train(train_loader, val_loader, 
           num_genes=dataset.datasets[0].num_genes,
           num_cell_types=dataset.datasets[0].num_pcm_classes,
+          up_marker_genes=args.up_marker_genes,
+          gene_names=args.gene_names,
+          pcm_cell_to_idx=dataset.datasets[0].livecell_class_to_idx,
+          celltypes=dataset.datasets[0].livecell_class_to_idx.keys(),
           cell_type_loss_weight=args.cell_type_loss_weight,
+          marker_gene_loss_weight=args.marker_gene_loss_weight,
           converter=lambda device, x: spaghetti_convertion(spaghetti, device, x),
           feature_extractor=lambda device, x: owkin_features(feature_extractor, device, image_processor, x), 
           domain_weight=args.domain_weight, coral_loss_weight=args.coral_loss_weight,

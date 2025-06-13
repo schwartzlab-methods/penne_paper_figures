@@ -105,7 +105,7 @@ def main():
     # arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--visiumhd_dir', type=str, nargs="+", help='Directory containing the VisiumHD patches')
-    parser.add_argument('--livecell_dir', type=str, help='Directory containing the LIVECell patches')
+    parser.add_argument('--livecell_dir', type=str, nargs="+", help='Directory containing the LIVECell patches')
     parser.add_argument('--mtx_dir', type=str, nargs="+", help='Directory containing the mtx files')
     parser.add_argument('--model_dir', type=str, help='Directory containing the model checkpoints')
     parser.add_argument('--gene_names', type=str, help='Path to the gene names feature tsv file')
@@ -140,7 +140,7 @@ def main():
     img_path_L = []
     with torch.no_grad():
         for batch in tqdm(val_loader, total=len(val_loader)):
-            he_image, mtx, pcm, image_path = batch
+            he_image, mtx, pcm, image_path, _ = batch
             pred_exp = model.forward(he_image, if_convert=False)
             # compute some features
             features_he = model.compute_feature(he_image, if_convert=False, if_translate=True)

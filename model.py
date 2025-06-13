@@ -1,22 +1,28 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import modules
 import pytorch_lightning as pl
+import random
 
 class GeneExpPredVisiumHD(pl.LightningModule):
     def __init__(self, num_genes, 
                  converter, feature_extractor,
                  num_cell_types,
+                 up_marker_genes=None,
                  domain_weight = 5.0, 
                  second_order_weight=0.1,
-                 cell_type_weight=0.001,
+                 cell_type_weight=0.0,
+                 marker_gene_weight=0.0,
                  lr=1e-3):
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
         self.translator = modules.Translator().to(self.device)
         self.domain_discriminator = modules.DomainDiscriminator(alpha=domain_weight).to(self.device)
         self.predictor = modules.Predictor(input_size=1024, hidden_size=4056, output_size=num_genes).to(self.device)
-        self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types).to(self.device)
+        if up_marker_genes:
+            self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types).to(self.device)
+            self.up_marker_genes_dict = up_marker_genes
         # feature extractors
         self.feature_extractor = feature_extractor
         self.converter = converter
@@ -25,11 +31,14 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.domain_weight = domain_weight
         self.coral_loss_weight = second_order_weight
         self.cell_type_weight = cell_type_weight
+        self.marker_gene_weight = marker_gene_weight
+        self.second_stage_training = True if up_marker_genes else False
         # loss functions
         self.criterion = nn.MSELoss().to(self.device)
         self.domain_criterion = nn.BCELoss().to(self.device)
-        self.cell_type_criterion = nn.CrossEntropyLoss().to(self.device)
-        
+        if up_marker_genes:
+            self.cell_type_criterion = nn.CrossEntropyLoss().to(self.device)
+
         self.save_hyperparameters(ignore=["converter", "feature_extractor"])
     
     @staticmethod
@@ -71,6 +80,27 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         if if_translate:
             x = self.translator(x)
         return x
+    
+    def _marker_margin_loss(self, pred_expr, cell_types, marker_dict, margin=1.0):
+        loss = 0.0
+        for i in range(pred_expr.size(0)):
+            cell_type = cell_types[i].item()
+            marker_genes = torch.tensor(marker_dict[cell_type])
+            num_marker_genes = marker_genes.sum().item()
+            if num_marker_genes == 0:
+                continue
+            non_marker_genes = 1 - marker_genes
+            # Sample a few non-marker genes to compare against
+            idx_non_marker = non_marker_genes.nonzero(as_tuple=False).flatten()
+            sampled_non = random.sample(range(idx_non_marker.shape[0]), num_marker_genes)
+            sampled_non_marker_genes_idx = idx_non_marker[sampled_non]
+            marker_vals = pred_expr[i, marker_genes.bool().to(self.device)].view(1,-1)
+            non_marker_vals = pred_expr[i, sampled_non_marker_genes_idx].view(1,-1)
+            # calculate loss
+            loss += F.margin_ranking_loss(
+                marker_vals, non_marker_vals, target=torch.ones_like(marker_vals), margin=margin
+            )
+        return loss / pred_expr.size(0)
 
     def training_step(self, batch, batch_idx):
         he_image, mtx, pcm_image, _, cell_type = batch
@@ -100,14 +130,26 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         exp_pred = self.predictor(he_translated)
         prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
 
-        # cell type classification part
-        cell_type_pred = self.cell_type_classifier(self.predictor(pcm_translated))
-        cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
+        if self.second_stage_training:
+            pred_exp_pcm = self.predictor(pcm_translated)
+            # cell type classification part
+            cell_type_pred = self.cell_type_classifier(pred_exp_pcm)
+            cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
-        # total loss for training
-        total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss
-        metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                   "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item()}
+            # marker gene loss
+            marker_gene_loss = self.marker_gene_weight * self._marker_margin_loss(pred_exp_pcm, cell_type, self.up_marker_genes_dict)
+
+            # total loss for training
+            total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
+            metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
+                    "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item(), 
+                    "train_marker_gene_loss": marker_gene_loss}
+        
+        else:
+            # total loss for training
+            total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
+            metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
+                    "train_prediction_loss": prediction_loss.item()}
         self.log_dict(metrics,prog_bar=True)
         return total_loss
  
@@ -134,14 +176,26 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # Predictor part
             exp_pred = self.predictor(he_translated)
             prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
-            # cell type classification part
-            cell_type_pred = self.cell_type_classifier(self.predictor(pcm_translated))
-            cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
+            if self.second_stage_training:
+                pred_exp_pcm = self.predictor(pcm_translated)
+                # cell type classification part
+                cell_type_pred = self.cell_type_classifier(pred_exp_pcm)
+                cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
-            # total loss for validation
-            total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss 
-            metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                       "val_prediction_loss": prediction_loss.item(),"val_cell_type_loss": cell_type_loss.item()}
+                # marker gene loss
+                marker_gene_loss = self.marker_gene_weight * self._marker_margin_loss(pred_exp_pcm, cell_type, self.up_marker_genes_dict)
+
+                # total loss for training
+                total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
+                metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
+                        "val_prediction_loss": prediction_loss.item(), "val_cell_type_loss": cell_type_loss.item(), 
+                        "val_marker_gene_loss": marker_gene_loss}
+            
+            else:
+                # total loss for training
+                total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
+                metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
+                        "val_prediction_loss": prediction_loss.item()}
             self.log_dict(metrics,prog_bar=True, sync_dist=True)
 
     def configure_optimizers(self):
