@@ -49,6 +49,10 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         # compare the mean exp of gene set vs everything else
         # get module score for the complement of the gene set
         complement_genes = [g for g in gene_names if g not in valid_genes]
+
+        # sample the complement genes to have the same number of genes as the target genes
+        if len(complement_genes) > len(valid_genes):
+            complement_genes = np.random.choice(complement_genes, size=len(valid_genes), replace=False)
         complement_scores = gene_df[complement_genes].mean(axis=1)[is_target]
 
         # Mann-Whitney U test (non-parametric)
