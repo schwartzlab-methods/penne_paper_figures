@@ -46,20 +46,29 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         target_scores = module_score[is_target]
         background_scores = module_score[~is_target]
 
+        # compare the mean exp of gene set vs everything else
+        # get module score for the complement of the gene set
+        complement_genes = [g for g in gene_names if g not in valid_genes]
+        complement_scores = gene_df[complement_genes].mean(axis=1)[is_target]
+
         # Mann-Whitney U test (non-parametric)
-        _, pval = mannwhitneyu(target_scores, background_scores)
+        _, pval_cross_celltype = mannwhitneyu(target_scores, background_scores)
+        _, pval_within_celltype = mannwhitneyu(target_scores, complement_scores)
 
         # Record result
         results.append({
             "cell_type": cell_type,
             "num_genes_in_set": len(valid_genes),
             "mean_score_in_type": target_scores.mean(),
+            "mean_score_in_type_nonmarker": complement_scores.mean(),
             "mean_score_elsewhere": background_scores.mean(),
-            "p_value": pval
+            "p_value_cross_celltype": pval_cross_celltype,
+            "p_value_within_celltype": pval_within_celltype
         })
 
         results_df = pd.DataFrame(results)
-        results_df["FDR"] = results_df["p_value"] * len(results_df)  # Bonferroni correction
+        results_df["FDR_cross"] = results_df["p_value_cross_celltype"] * len(results_df)  # Bonferroni correction
+        results_df["FDR_within"] = results_df["p_value_within_celltype"] * len(results_df)  # Bonferroni correction
         
         # plot violin plot
         plt.figure(figsize=(4, 4))
@@ -68,11 +77,26 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
             y=module_score,
             palette="muted"
         )
-        plt.title(f"Enrichment score for {cell_type} genes")
+        plt.title(f"Mean Expression for {cell_type} Marker Genes")
         plt.ylabel("Mean Expression of Gene Set")
         plt.xlabel("Cell Type")
         plt.tight_layout()
-        plt.savefig(os.path.join(out, f"{cell_type}_gene_set_mean_exp.png"))
+        plt.savefig(os.path.join(out, f"{cell_type}_gene_set_mean_exp_across.png"))
+        plt.close()
+
+        plt.figure(figsize=(4, 4))
+        sns.violinplot(
+            x=["Marker"]*len(target_scores.tolist()) + ["Other"]*len(complement_scores.tolist()),
+            y=target_scores.tolist()+complement_scores.tolist(),
+            palette="muted"
+        )
+        plt.title(f"Mean Expression for {cell_type} Marker Genes")
+        plt.ylabel("Mean Expression of Gene Set")
+        plt.xlabel("Gene Type")
+        plt.tight_layout()
+        plt.savefig(os.path.join(out, f"{cell_type}_gene_set_mean_exp_within.png"))
+        plt.close()
+
 
     results_df = pd.DataFrame(results)
     results_df.to_csv(os.path.join(out, "gene_set_enrichment.csv"))
@@ -111,6 +135,8 @@ def main():
     enriched_gene_sets = {
         celltype: signature[celltype].dropna().tolist() for celltype in celltype_of_interest if celltype in signature.columns
     }
+    for key, value in enriched_gene_sets.items():
+        print(f"Number of marker genes of {key}:", len(value))
     
     # Validate enrichment
     results_df = validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gene_sets, args.output)

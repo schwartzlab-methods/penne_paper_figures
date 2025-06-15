@@ -111,7 +111,7 @@ def train(train_loader, val_loader,
     # create model
     lit_model = GeneExpPredVisiumHD(num_genes, 
                                     converter, feature_extractor,
-                                    num_cell_types,
+                                    num_cell_types=num_cell_types,
                                     up_marker_genes=enriched_gene_sets,
                                     domain_weight = domain_weight, 
                                     second_order_weight=coral_loss_weight,

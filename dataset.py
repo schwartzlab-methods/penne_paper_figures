@@ -72,6 +72,29 @@ class LiveCellDataset(Dataset):
     def __len__(self):
         return len(self.images)
 
+class U373Dataset(Dataset):
+    def __init__(self, path: str):
+        super(U373Dataset, self).__init__()
+        self.images: list[str] = [os.path.join(path, img) for img in os.listdir(path)]
+        self.transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+            # v2.RandomCrop((256,256)),
+            v2.Resize((256, 256)),
+        ])
+
+    def __getitem__(self, idx):
+        img = Image.open(self.images[idx])
+        img = np.array(img, dtype=np.uint16)
+        img = self.transform(img)
+        img = img / 255 # rescale to [0,1]
+        img = torch.clamp(img, max=1, min=0) #ensure no float overflow
+        return img, (0, self.images[idx], "U373")
+    
+    def __len__(self):
+        return len(self.images)
+
+
 class VisiumDataset(Dataset):
     '''
     Generate the Visium dataset class

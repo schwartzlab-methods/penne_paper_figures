@@ -8,7 +8,7 @@ import random
 class GeneExpPredVisiumHD(pl.LightningModule):
     def __init__(self, num_genes, 
                  converter, feature_extractor,
-                 num_cell_types,
+                 num_cell_types=0,
                  up_marker_genes=None,
                  domain_weight = 5.0, 
                  second_order_weight=0.1,
