@@ -73,6 +73,9 @@ class LiveCellDataset(Dataset):
         return len(self.images)
 
 class U373Dataset(Dataset):
+    '''
+    Validation using the U373 dataset by Deiber et al. (2005)
+    '''
     def __init__(self, path: str):
         super(U373Dataset, self).__init__()
         self.images: list[str] = [os.path.join(path, img) for img in os.listdir(path)]
@@ -93,7 +96,39 @@ class U373Dataset(Dataset):
     
     def __len__(self):
         return len(self.images)
-
+    
+class TrizinaCao2Dataset(Dataset):
+    '''
+    Validation using the Cao-2 dataset by Trizina et al. (2023)
+    '''
+    def __init__(self, path):
+        super(TrizinaCao2Dataset, self).__init__()
+        self.path = [os.path.join(path, x) for x in os.listdir(path) if os.path.isdir(os.path.join(path, x))]
+        self.images = []
+        self.treatment = [] # treatment is ctrl or Cam (treated with Camptothecin)
+        for each in self.path:
+            pcm_image_path = [os.path.join(each, x) for x in os.listdir(each) if x.endswith("0.jpg")]
+            self.images.extend(pcm_image_path)
+            self.treatment.extend(os.path.basename(each).split("_")[2]*len(pcm_image_path))
+        self.transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+            v2.RandomCrop((256,256)),
+            v2.Resize((256, 256)),
+        ])
+    
+    def __getitem__(self, idx):
+        img = Image.open(self.images[idx])
+        img = np.array(img, dtype=np.uint16)
+        img = self.transform(img)
+        img = img / 255
+        img = torch.clamp(img, max=1, min=0) #ensure no float overflow
+        treatment = self.treatment[idx]
+        treatment_idx = 0 if treatment.lower() == "ctrl" else 1
+        return img, (treatment_idx, self.images[idx], treatment)
+    
+    def __len__(self):
+        return len(self.images)
 
 class VisiumDataset(Dataset):
     '''
