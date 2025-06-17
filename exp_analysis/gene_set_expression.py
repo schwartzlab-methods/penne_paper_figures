@@ -5,14 +5,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
 import os
+from functools import reduce
 from tqdm import tqdm
 
 def read_tsv(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = [line.strip().split('\t') for line in f]
     df = pd.DataFrame(lines).T #number of genes x number of cells
-    df.columns = [cell.lower() for cell in df.iloc[0].tolist()]  # set the first row as header
-    df = df[2:]  # remove the first row
+    df.columns = [cell.lower().split("-")[0] for cell in df.iloc[0].tolist()]  # set the first row as header
+    df = df[2:]  # remove the first row and discription
     return df
 
 def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gene_sets, out):
@@ -106,6 +107,7 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
     results_df.to_csv(os.path.join(out, "gene_set_enrichment.csv"))
 
 def main():
+    np.random.seed(42)
     parser = argparse.ArgumentParser()
     parser.add_argument('--expression_npy', type=str, help='Path to expression numpy matrix')
     parser.add_argument('--up_gene_sets', type=str, help='Path to the .gmt file containg the up-regulated gene sets')
@@ -136,8 +138,13 @@ def main():
         signature = signature.map(lambda x: name_to_symbol.get(x, x))  # map gene names to symbols
 
     # select only the cell type of interest
+    # enriched_gene_sets = {
+    #     celltype: list(set(signature[celltype].dropna().values.ravel().tolist())) 
+    #                 for celltype in celltype_of_interest if celltype in signature.columns
+    # }
     enriched_gene_sets = {
-        celltype: signature[celltype].dropna().tolist() for celltype in celltype_of_interest if celltype in signature.columns
+        celltype: list(reduce(set.intersection, (set(col) for _, col in signature.loc[:, celltype].dropna().items()))) 
+                    for celltype in celltype_of_interest if celltype in signature.columns
     }
     for key, value in enriched_gene_sets.items():
         print(f"Number of marker genes of {key}:", len(value))

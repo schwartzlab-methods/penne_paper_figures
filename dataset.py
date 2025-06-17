@@ -97,23 +97,23 @@ class U373Dataset(Dataset):
     def __len__(self):
         return len(self.images)
     
-class TrizinaCao2Dataset(Dataset):
+class TrizinaCaco2Dataset(Dataset):
     '''
     Validation using the Cao-2 dataset by Trizina et al. (2023)
     '''
     def __init__(self, path):
-        super(TrizinaCao2Dataset, self).__init__()
+        super(TrizinaCaco2Dataset, self).__init__()
         self.path = [os.path.join(path, x) for x in os.listdir(path) if os.path.isdir(os.path.join(path, x))]
         self.images = []
         self.treatment = [] # treatment is ctrl or Cam (treated with Camptothecin)
         for each in self.path:
             pcm_image_path = [os.path.join(each, x) for x in os.listdir(each) if x.endswith("0.jpg")]
             self.images.extend(pcm_image_path)
-            self.treatment.extend(os.path.basename(each).split("_")[2]*len(pcm_image_path))
+            self.treatment.extend([os.path.basename(os.path.normpath(each)).split("_")[2]]*len(pcm_image_path))
         self.transform = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32),
-            v2.RandomCrop((256,256)),
+            # v2.RandomCrop((256,256)),
             v2.Resize((256, 256)),
         ])
     

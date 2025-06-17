@@ -8,7 +8,7 @@ from train_model import init_spaghetti
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from model import GeneExpPredVisiumHD
-from dataset import LiveCellDataset, U373Dataset
+from dataset import LiveCellDataset, U373Dataset, TrizinaCaco2Dataset
 from transformers import AutoImageProcessor, AutoModel
 import argparse
 from _feature_extractors import owkin_features, spaghetti_convertion
@@ -21,12 +21,13 @@ def main():
     pl.seed_everything(42, workers=True)
     # arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('--livecell_dir', type=str, nargs="+", help='Directory containing the LIVECell images')
+    parser.add_argument('--img_dir', type=str, nargs="+", help='Directory containing the LIVECell images (or other PCM images)')
     parser.add_argument('--model_dir', type=str, help='Directory containing the model checkpoints')
     parser.add_argument('--gene_names', type=str, help='Path to the gene names feature tsv file')
     parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument("--u373_dataset", action="store_true", help="use the u373 dataset instead of the livecell data")
+    parser.add_argument("--caco2_dataset", action="store_true", help="use the cao2 dataset instead of the livecell data")
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
     # check if the output directory exists
@@ -34,9 +35,11 @@ def main():
         os.makedirs(args.output_dir)
     # create dataset
     if args.u373_dataset:
-        dataset = U373Dataset(args.livecell_dir[0])
+        dataset = U373Dataset(args.img_dir[0])
+    elif args.caco2_dataset:
+        dataset = TrizinaCaco2Dataset(args.img_dir[0])
     else:
-        dataset = LiveCellDataset(args.livecell_dir)
+        dataset = LiveCellDataset(args.img_dir)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     # create feature extractor
     feature_extractor = AutoModel.from_pretrained("/fs01/home/richarddong/.cache/huggingface/hub/phikon-v2")
