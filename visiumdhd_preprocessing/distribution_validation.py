@@ -17,7 +17,8 @@ def plot_distribution(data, labels, save_dir, exp_name):
     with standard deviation bands for each label. 
     
     Parameters:
-    - data: numpy array of shape (cells x genes)
+    - data: numpy array of shape (obs x genes)
+    - labels: label for each obs
     - save_dir: directory to save the plots
     - exp_name: name of the experiment for saving the plot
     """
@@ -27,7 +28,8 @@ def plot_distribution(data, labels, save_dir, exp_name):
     data = np.log2(data + 1)
 
     cdf_dic = {}
-    for i, label in enumerate(labels):
+    print("Calculating CDF data")
+    for i, label in enumerate(tqdm(labels)):
         x = data[i, :].flatten()
         x_sorted = np.sort(x)[::-1]  # sort in descending order
         cdf = np.cumsum(x_sorted) / np.sum(x_sorted)  # cumulative distribution function
@@ -42,13 +44,12 @@ def plot_distribution(data, labels, save_dir, exp_name):
         mean_cdf[label] = np.mean(cdfs, axis=0)
         std_cdf[label] = np.std(cdfs, axis=0)
     
-    unique_labels = list(cdf_dic.keys())
-    df = pd.DataFrame({
-        "Mean CDF": [mean_cdf[label] for label in unique_labels],
-        "Std CDF": [std_cdf[label] for label in unique_labels],
-        "Label": unique_labels
-    })
-    df.to_csv(os.path.join(save_dir, f"cdf_data_{exp_name}.csv"), index=False)
+    mean_cdf_dic = pd.DataFrame(mean_cdf)
+    mean_cdf_dic.to_csv(os.path.join(save_dir, f"mean_cdf_{exp_name}.csv"), index=False)
+    std_cdf_dic = pd.DataFrame(std_cdf)
+    std_cdf_dic.to_csv(os.path.join(save_dir, f"std_cdf_{exp_name}.csv"), index=False)
+
+    unique_labels = list(mean_cdf.keys())
 
     # Plotting
     plt.figure(figsize=(10, 6))
@@ -61,14 +62,16 @@ def plot_distribution(data, labels, save_dir, exp_name):
     plt.title(f"Cumulative Distribution of Gene Expression - {exp_name}")
     plt.xlabel("Genes (sorted by expression)")
     plt.ylabel("Cumulative Distribution Function (CDF)")
-    plt.legend(title="Visium Sample")
+    plt.legend(title="Sample")
     plt.savefig(os.path.join(save_dir, f"cdf_plot_{exp_name}.png"))
     plt.close()
+    print("Figure saved")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_npy', type=str, required=True, nargs="+", help='Path to the numpy file containing the gene expression data')
+    parser.add_argument('--sample_names', type=str, nargs="+", default=None, help="Labels for each data npy")
     parser.add_argument('--save_dir', type=str, required=True, help='Directory to save the plots')
     parser.add_argument('--exp_name', type=str, required=True, help='Name of the experiment for saving the plot')
     args = parser.parse_args()
@@ -79,18 +82,35 @@ def main():
     data_L = []
     sample_L = []
     # Load the data
-    for path in args.data_npy:
+    for idx, path in enumerate(args.data_npy):
         if not os.path.exists(path):
             raise FileNotFoundError(f"Data file {path} does not exist.")
-        for file in tqdm(os.listdir(path), desc=f"Loading data from {path}"):
-            if file.endswith('.npy'):
-                data = np.load(os.path.join(path, file))
-                data_L.append(data)
-                # sample name is the third last part of the direcotry structure
-                sample_name = os.path.dirname(os.path.dirname(os.path.dirname(path))) 
-                sample_L.append(sample_name)
+        print(f"Loading from {path}")
+        if path.endswith(".npy"):
+            data = np.load(path)
+            data_L.append(data)
+            if args.sample_names:
+                sample_L.extend([args.sample_names[idx]] * data.shape[0])
+            else:
+                sample_name = os.path.basename(os.path.dirname(path))
+                sample_L.append([sample_name] * data.shape[0])
+        else:
+            for file in tqdm(os.listdir(path)):
+                if file.endswith('.npy'):
+                    data = np.load(os.path.join(path, file))
+                    data_L.append(data)
+                    if args.sample_names:
+                        sample_L.append(args.sample_names[idx])
+                    else:
+                        # sample name is the third last part of the direcotry structure
+                        sample_name = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
+                        sample_L.append(sample_name)
     # Concatenate all data
     data = np.concatenate(data_L, axis=0)
+    assert len(sample_L) == data.shape[0], f"Found shape {len(sample_L)} and {data.shape[0]}"
 
     # Plot the distribution
     plot_distribution(data, sample_L, args.save_dir, args.exp_name)
+
+if __name__ == "__main__":
+    main()

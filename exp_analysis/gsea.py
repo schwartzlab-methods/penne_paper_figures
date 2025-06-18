@@ -5,12 +5,15 @@ import pandas as pd
 import gseapy as gp
 import argparse
 import os
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 def main():
     parser = argparse.ArgumentParser(description="GSEA analysis")
     parser.add_argument('--csv', type=str, required=True, help='Path to the csv file with LFC values')
     parser.add_argument('--output', type=str, required=True, help='Directory to save the GSEA results')
+    parser.add_argument('--mapping_dict', type=str, default=None, help='features.tsv file for converting gene names to gene symbols.')
     parser.add_argument('--gene_sets', type=str, default="MSigDB_Hallmark_2020", 
                         help='Path to the gene sets file (GMT format or a string with names from GSEA). ' \
                         'If not provided, will use the default of MSigDB_Hallmark_2020.')
@@ -25,18 +28,48 @@ def main():
     df = df.loc[:, ['gene', 'log_fc']]
     df.columns = ['gene', 'score']
 
+    if args.mapping_dict:
+        # Load the mapping dictionary
+        template = pd.read_csv(args.mapping_dict, sep='\t')
+        name_to_symbol = {row.iloc[0]: row.iloc[1] for _, row in template.iterrows()}  # map from gene symbol to name
+        # Convert the gene names to gene symbols
+        df['gene'] = df['gene'].map(name_to_symbol)
+        # Drop rows with NaN values in the 'gene' column
+        df = df.dropna(subset=['gene'])
+        print("Size of the dataframe:", df.shape)        
+
     pre_res = gp.prerank(
         rnk=df,
         gene_sets=args.gene_sets,
         processes=4,  # Use 4 processes for parallel computation
         outdir=args.output,
         format='png',  # Save plots in PNG format
+        permutation_num=10000,
         seed=42,  # Set a random seed for reproducibility
         verbose=True
     )
     # Save the prerank results
     pre_res.res2d.to_csv(os.path.join(args.output, 'gsea_results.csv'), index=True)
 
+    # Sort by NES and select top 10
+    top_terms_sorted = pre_res.res2d.sort_values("NES", ascending=False).head(30)
+
+    plt.figure(figsize=(10, 6))
+    sns.barplot(
+        x="NES",
+        y="Term",
+        data=top_terms_sorted,
+        orient='h'
+    )
+    plt.axvline(0, color='gray', linestyle='--')
+    plt.title("Normalized Enrichment Scores (Top GSEA Hits)")
+
+    plt.xlabel("Normalized Enrichment Score (NES)")
+    plt.ylabel("Gene Set")
+    plt.title("Top Enriched Gene Sets (GSEA)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(args.output, 'gsea_results_top.png'))
+    plt.close()
 
 if __name__ == "__main__":
     main()
