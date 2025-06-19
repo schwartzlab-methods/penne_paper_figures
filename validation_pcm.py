@@ -8,7 +8,7 @@ from train_model import init_spaghetti
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from model import GeneExpPredVisiumHD
-from dataset import LiveCellDataset, U373Dataset, TrizinaCaco2Dataset
+from dataset import LiveCellDataset, U373Dataset, TrizinaCaco2Dataset, ShaneMCF10ADataset
 from transformers import AutoImageProcessor, AutoModel
 import argparse
 from _feature_extractors import owkin_features, spaghetti_convertion
@@ -28,6 +28,7 @@ def main():
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument("--u373_dataset", action="store_true", help="use the u373 dataset instead of the livecell data")
     parser.add_argument("--caco2_dataset", action="store_true", help="use the cao2 dataset instead of the livecell data")
+    parser.add_argument("--shane_mcf10a_dataset", action="store_true", help="use the MCF10A dataset from Shane instead of the livecell data")
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
     # check if the output directory exists
@@ -38,6 +39,8 @@ def main():
         dataset = U373Dataset(args.img_dir[0])
     elif args.caco2_dataset:
         dataset = TrizinaCaco2Dataset(args.img_dir[0])
+    elif args.shane_mcf10a_dataset:
+        dataset = ShaneMCF10ADataset(args.img_dir[0])
     else:
         dataset = LiveCellDataset(args.img_dir)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)

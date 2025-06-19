@@ -15,8 +15,8 @@ from cmapPy.pandasGEXpress.parse_gct import parse
 def main():
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Differential Gene Expression Analysis")
-    parser.add_argument('--counts', type=str, required=True, help='Path to the counts matrix npy file')
-    parser.add_argument('--labels', type=str, required=True, help='Path to the labels npy file')
+    parser.add_argument('--counts', type=str, required=True, nargs="+", help='Path to the counts matrix npy file')
+    parser.add_argument('--labels', type=str, required=True, nargs="+", help='Path to the labels npy file')
     parser.add_argument('--genes', type=str, required=True, help='Path to the gene names npy file')
     parser.add_argument('--cell_types', type=str, required=True, nargs="+", help='The two cell types to compare')
     parser.add_argument('--output', type=str, required=True, help='Output directory for results')
@@ -27,8 +27,16 @@ def main():
 
     args.cell_types.sort() #sort as the alphabetical first is the reference in linear modeling
     # Load count data (rows: cells, columns: gemes)
-    counts = np.load(args.counts).astype(float)
-    cell_types = np.load(args.labels)
+    count_L = []
+    for each in args.counts:
+        count_L.append(np.load(each).astype(float))
+    counts = np.concatenate(count_L)
+    # counts = np.load(args.counts).astype(float)
+    cell_L = []
+    for each in args.labels:
+        cell_L.append(np.load(each))
+    cell_types = np.concatenate(cell_L).ravel()
+    # cell_types = np.load(args.labels)
     gene_names = np.load(args.genes)
     assert counts.shape[0] == cell_types.shape[0], "Counts and labels must have the same number of cells"
     assert counts.shape[1] == gene_names.shape[0], "Counts and gene names must match in number of genes"

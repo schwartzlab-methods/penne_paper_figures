@@ -130,6 +130,41 @@ class TrizinaCaco2Dataset(Dataset):
     def __len__(self):
         return len(self.images)
 
+class ShaneMCF10ADataset(Dataset):
+    '''
+    Validation using Shane's MCF10A dataset (internal)
+    '''
+    def __init__(self, path):
+        super(ShaneMCF10ADataset, self).__init__()
+        self.path = [os.path.join(path, x) for x in os.listdir(path) if os.path.isdir(os.path.join(path, x))]
+        self.images = []
+        self.treatment = [] # treatment is NIR, 2Gy, or 5Gy
+        for each in self.path:
+            pcm_image_path = [os.path.join(each, x) for x in os.listdir(each) if (x.split(".")[0].split("_")[-1][0:3] == "00d") and (x.split(".")[0].split("_")[1] == "A1")] # we get only 0 day
+            self.images.extend(pcm_image_path)
+            self.treatment.extend([os.path.basename(os.path.normpath(each)).split("_")[0]]*len(pcm_image_path))
+        self.transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+            v2.RandomCrop((256,256)),
+            v2.Resize((256, 256)),
+        ])
+    
+    def __getitem__(self, idx):
+        img = Image.open(self.images[idx])
+        img = np.array(img, dtype=np.uint16)
+        img = self.transform(img)
+        img = img / 255
+        img = torch.clamp(img, max=1, min=0) #ensure no float overflow
+        treatment = self.treatment[idx]
+        treatment_idx = (0 if treatment == "NIR" 
+                        else 1 if treatment == "2Gy"
+                        else 2)
+        return img, (treatment_idx, self.images[idx], treatment)
+    
+    def __len__(self):
+        return len(self.images)
+
 class VisiumDataset(Dataset):
     '''
     Generate the Visium dataset class

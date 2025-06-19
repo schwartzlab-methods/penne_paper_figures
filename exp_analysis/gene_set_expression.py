@@ -109,10 +109,10 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
 def main():
     np.random.seed(42)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--expression_npy', type=str, help='Path to expression numpy matrix')
+    parser.add_argument('--expression_npy', type=str, nargs="+", help='Path to expression numpy matrix')
     parser.add_argument('--up_gene_sets', type=str, help='Path to the .gmt file containg the up-regulated gene sets')
     parser.add_argument('--gene_names', type=str, help='Path to the numpy file containg the names of the genes')
-    parser.add_argument('--cell_names', type=str, help='Path to the numpy file containg the names of the cells')
+    parser.add_argument('--cell_names', type=str, nargs="+", help='Path to the numpy file containg the names of the cells')
     parser.add_argument('--gene_template', type=str, default=None, help='Optional, path to the features.tsv file for converting gene names to gene symbols')
     parser.add_argument('--output', type=str, help='Path to the output directory')
     parser.add_argument('--cell_types', type=str, nargs="+", help="Cell types that you want to compare")
@@ -120,13 +120,18 @@ def main():
     if not os.path.exists(args.output):
         os.makedirs(args.output)
 
-    expression_matrix = np.load(args.expression_npy)
+    exp_L = []
+    for each in args.expression_npy:
+        exp_L.append(np.load(each))
+    expression_matrix = np.concatenate(exp_L)
     # normalize to counts per million
     expression_matrix = expression_matrix / np.sum(expression_matrix, axis=1, keepdims=True) * 1e6
-    # # log2 transform
-    # expression_matrix = np.log2(cexpression_matrixounts + 1)
+    # log2 transform
+    expression_matrix = np.log2(cexpression_matrixounts + 1)
     gene_names = np.load(args.gene_names)
-    cell_labels = [cell.lower() for cell in np.load(args.cell_names).tolist()]
+    cell_labels = []
+    for each in args.cell_names:
+        cell_labels.extend([cell.lower() for cell in np.load(each).tolist()])
     celltype_of_interest = [cell.lower() for cell in args.cell_types]
     signature = read_tsv(args.up_gene_sets)
 
@@ -138,14 +143,14 @@ def main():
         signature = signature.map(lambda x: name_to_symbol.get(x, x))  # map gene names to symbols
 
     # select only the cell type of interest
-    # enriched_gene_sets = {
-    #     celltype: list(set(signature[celltype].dropna().values.ravel().tolist())) 
-    #                 for celltype in celltype_of_interest if celltype in signature.columns
-    # }
     enriched_gene_sets = {
-        celltype: list(reduce(set.intersection, (set(col) for _, col in signature.loc[:, celltype].dropna().items()))) 
+        celltype: list(set(signature[celltype].dropna().values.ravel().tolist())) 
                     for celltype in celltype_of_interest if celltype in signature.columns
     }
+    # enriched_gene_sets = {
+    #     celltype: list(reduce(set.intersection, (set(col) for _, col in signature.loc[:, celltype].dropna().items()))) 
+    #                 for celltype in celltype_of_interest if celltype in signature.columns
+    # }
     for key, value in enriched_gene_sets.items():
         print(f"Number of marker genes of {key}:", len(value))
     
