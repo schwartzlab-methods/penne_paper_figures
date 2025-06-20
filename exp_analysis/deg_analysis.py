@@ -73,6 +73,9 @@ def main():
             l2fc_gt = (gt_data[args.cell_types[1].lower()] - gt_data[args.cell_types[0].lower()]).to_numpy()
             print("GT processed, running DGE on data")
 
+    # revert the log2 transform in the prediction
+    counts = 2**counts - 1
+
     # normalize to counts per million
     counts = counts / np.sum(counts, axis=1, keepdims=True) * 1e6
     # log2 transform

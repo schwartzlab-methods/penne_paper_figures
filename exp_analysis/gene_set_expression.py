@@ -76,27 +76,27 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         results_df["FDR_within"] = results_df["p_value_within_celltype"] * len(results_df)  # Bonferroni correction
         
         # plot violin plot
-        plt.figure(figsize=(4, 4))
+        plt.figure(figsize=(8, 8))
         sns.violinplot(
             x=label_series.isin([cell_type]).map({True: cell_type, False: "Other"}),
             y=module_score,
             palette="muted"
         )
-        plt.title(f"Mean Expression for {cell_type} Marker Genes")
-        plt.ylabel("Mean Expression of Gene Set")
+        plt.title(f"Mean Log2-Normalized Expression for {cell_type} Marker Genes")
+        plt.ylabel("Mean Log2-Normalized Expression of Gene Set")
         plt.xlabel("Cell Type")
         plt.tight_layout()
         plt.savefig(os.path.join(out, f"{cell_type}_gene_set_mean_exp_across.png"))
         plt.close()
 
-        plt.figure(figsize=(4, 4))
+        plt.figure(figsize=(8, 8))
         sns.violinplot(
             x=["Marker"]*len(target_scores.tolist()) + ["Other"]*len(complement_scores.tolist()),
             y=target_scores.tolist()+complement_scores.tolist(),
             palette="muted"
         )
-        plt.title(f"Mean Expression for {cell_type} Marker Genes")
-        plt.ylabel("Mean Expression of Gene Set")
+        plt.title(f"Mean Log2-Normalized Expression for {cell_type} Marker Genes")
+        plt.ylabel("Mean Log2-Normalized Expression of Gene Set")
         plt.xlabel("Gene Type")
         plt.tight_layout()
         plt.savefig(os.path.join(out, f"{cell_type}_gene_set_mean_exp_within.png"))
@@ -124,10 +124,12 @@ def main():
     for each in args.expression_npy:
         exp_L.append(np.load(each))
     expression_matrix = np.concatenate(exp_L)
+    # revert the log2 transform in the prediction
+    expression_matrix = 2**expression_matrix - 1
     # normalize to counts per million
     expression_matrix = expression_matrix / np.sum(expression_matrix, axis=1, keepdims=True) * 1e6
     # log2 transform
-    expression_matrix = np.log2(cexpression_matrixounts + 1)
+    expression_matrix = np.log2(expression_matrix + 1)
     gene_names = np.load(args.gene_names)
     cell_labels = []
     for each in args.cell_names:
