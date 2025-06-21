@@ -82,7 +82,7 @@ class U373Dataset(Dataset):
         self.transform = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32),
-            # v2.RandomCrop((256,256)),
+            v2.RandomCrop((256,256)),
             v2.Resize((256, 256)),
         ])
 
