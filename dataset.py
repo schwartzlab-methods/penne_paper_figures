@@ -9,24 +9,7 @@ import scanpy as sc
 import torchvision.transforms.v2 as v2
 import torch
 
-class PanNukeDataset(Dataset):
-    '''
-    Generate the PanNuke Dataset class for testing purposes
-    The PanNuke dataset is stored in three numpy files:
-    - masks/fold1/images.npy: size (N, 256, 256, 3)
-    - images/fold1/masks.npy: size (N, 256, 256, 6), where each channel is the mask for one class
-    - images/fold1/types.npy: size (N,), where each element is the tissue type of the image
-    '''
-    def __init__(self, root_dir):
-        super(PanNukeDataset, self).__init__()
-        self.images = np.load(os.path.join(root_dir, 'images/fold1/images.npy'))
-        self.masks = np.load(os.path.join(root_dir, 'masks/fold1/masks.npy'))
-        self.type = np.load(os.path.join(root_dir, 'images/fold1/types.npy'))
-    def __len__(self):
-        return len(self.images)
-    def __getitem__(self, idx):
-        return self.images[idx], self.masks[idx], self.type[idx]
-    
+#! Microscopy only datasets
 class LiveCellDataset(Dataset):
     '''
     Construct the LiveCell dataset class
@@ -165,6 +148,25 @@ class ShaneMCF10ADataset(Dataset):
     def __len__(self):
         return len(self.images)
 
+#! H&E Related datasets
+class PanNukeDataset(Dataset):
+    '''
+    Generate the PanNuke Dataset class for testing purposes
+    The PanNuke dataset is stored in three numpy files:
+    - masks/fold1/images.npy: size (N, 256, 256, 3)
+    - images/fold1/masks.npy: size (N, 256, 256, 6), where each channel is the mask for one class
+    - images/fold1/types.npy: size (N,), where each element is the tissue type of the image
+    '''
+    def __init__(self, root_dir):
+        super(PanNukeDataset, self).__init__()
+        self.images = np.load(os.path.join(root_dir, 'images/fold1/images.npy'))
+        self.masks = np.load(os.path.join(root_dir, 'masks/fold1/masks.npy'))
+        self.type = np.load(os.path.join(root_dir, 'images/fold1/types.npy'))
+    def __len__(self):
+        return len(self.images)
+    def __getitem__(self, idx):
+        return self.images[idx], self.masks[idx], self.type[idx]
+    
 class VisiumDataset(Dataset):
     '''
     Generate the Visium dataset class
@@ -233,15 +235,14 @@ class VisiumHDDataset(Dataset):
         # region = image.crop((x1, y1, x2, y2))
         return image, mtx
     
+#! ST + Microscopy datasets
 class VisiumHD_Livecell_Dataset(Dataset):
     ''''
     Generate the VisiumHD and LIVECell dataset class
     The VisiumHD dataset consists of:
     - tissue_img/: a directory of images of the tissue
-    - mtx/: a directory of truncated matrix files, one for each tissue image, in anndata .h5ad format, which contains:
-        - the expression matrix in cells x features (in anndata.X)
-        - the spatial coordinates of the spots (in anndata.obs["cell_position_xmin/ymin/xmax/ymax"])
-        - the gene names (in anndata.var_names)
+    - mtx/: a directory of truncated matrix files, one for each tissue image, in numpy format
+        Each contains a long vector of gene expression counts for each spot.
     '''
     def __init__(self, tissue_dir, mtx_dir, livecell_dir):
         super(VisiumHD_Livecell_Dataset, self).__init__()
