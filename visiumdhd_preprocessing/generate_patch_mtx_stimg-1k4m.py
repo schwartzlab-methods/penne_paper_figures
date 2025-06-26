@@ -32,6 +32,7 @@ def preprocess_stimage_1k4m(base_dir: str):
 def find_common_genes(csv_files: str):
     """
     Find common genes in the given csv files.
+    !TODO: Filter by the number of genes in the csv? some files may have very few genes
     """
     save_path = os.path.join(os.path.dirname(os.path.dirname(csv_files[0])))
     print("Common genes will be saved to ", save_path)
@@ -50,7 +51,6 @@ def find_common_genes(csv_files: str):
     with open(os.path.join(save_path, "common_genes.txt"), "w") as f:
         for gene in sorted(common_genes_L):
             f.write(f"{gene}\n")
-    print(f"Common genes found: {len(common_genes_L)}")
     return common_genes_L
 
 def process_sample(args):
@@ -67,14 +67,12 @@ def process_sample(args):
         patch_names = exp_df["Unnamed: 0"].tolist()
         coor_df = coor_df.drop(columns=["Unnamed: 0"])
         exp_df = exp_df.drop(columns=["Unnamed: 0"])
-        # Normalize and log-2 transform the matx
-        exp_df = exp_df / np.sum(exp_df, axis=1, keepdims=True) * 1e6
-        exp_df = np.log2(exp_df + 1)
         for i, patch_name in enumerate(patch_names):
             patch = np.array([exp_df.iloc[i].values])
             # Normalize and log-2 transform the matx
             patch = patch / np.sum(patch, axis=1, keepdims=True) * 1e6
             patch = np.log2(patch + 1)
+            # get images
             x_centre, y_centre, radius = coor_df.iloc[i][["xaxis", "yaxis", "r"]]
             x = int(x_centre - radius)
             y = int(y_centre - radius)
@@ -82,6 +80,7 @@ def process_sample(args):
                 print(f"Skipping patch {patch_name} for sample {sample} due to out of bounds coordinates.")
                 continue
             patch_image = image.crop((x, y, x + 2 * radius, y + 2 * radius))
+            # save image and numpy
             patch_image.save(os.path.join(base_dir, "Visium_patch_images", f"{sample}_{patch_name}.png"))
             np.save(os.path.join(base_dir, "Visium_patches_exp", f"{sample}_{patch_name}.npy"), patch)
     except Exception as e:
@@ -116,7 +115,10 @@ def main():
     else:
         exp_files = [os.path.join(base_dir, "Visium", "gene_exp", f) for f in os.listdir(os.path.join(base_dir, "Visium", "gene_exp")) if f.endswith('.csv')]
         common_genes = find_common_genes(exp_files)
-        
+    print(f"Common genes found: {len(common_genes)}")
+
+
+    print("Start processing patches")    
     create_patch_matrix(base_dir, common_genes)
 
 if __name__ == "__main__":
