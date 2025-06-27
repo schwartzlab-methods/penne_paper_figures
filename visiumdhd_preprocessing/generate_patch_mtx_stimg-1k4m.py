@@ -33,6 +33,7 @@ def find_common_genes(csv_files: str):
     """
     Find common genes in the given csv files.
     !TODO: Filter by the number of genes in the csv? some files may have very few genes
+    !TODO: Filter by pixel sizes (ie: ignore all super small patches)
     """
     save_path = os.path.join(os.path.dirname(os.path.dirname(csv_files[0])))
     print("Common genes will be saved to ", save_path)
@@ -45,7 +46,6 @@ def find_common_genes(csv_files: str):
             common_genes = genes
         else:
             common_genes.intersection_update(genes)
-        print(file, len(common_genes))
     # save common genes to a file
     common_genes_L = sorted(list(common_genes))
     with open(os.path.join(save_path, "common_genes.txt"), "w") as f:
@@ -70,7 +70,7 @@ def process_sample(args):
         for i, patch_name in enumerate(patch_names):
             patch = np.array([exp_df.iloc[i].values])
             # Normalize and log-2 transform the matx
-            patch = patch / np.sum(patch, axis=1, keepdims=True) * 1e6
+            patch = patch / (np.sum(patch, axis=1, keepdims=True)+1e-10) * 1e6
             patch = np.log2(patch + 1)
             # get images
             x_centre, y_centre, radius = coor_df.iloc[i][["xaxis", "yaxis", "r"]]
@@ -81,8 +81,8 @@ def process_sample(args):
                 continue
             patch_image = image.crop((x, y, x + 2 * radius, y + 2 * radius))
             # save image and numpy
-            patch_image.save(os.path.join(base_dir, "Visium_patch_images", f"{sample}_{patch_name}.png"))
-            np.save(os.path.join(base_dir, "Visium_patches_exp", f"{sample}_{patch_name}.npy"), patch)
+            patch_image.save(os.path.join(base_dir, "Visium_patch_images_processed", f"{patch_name}.png"))
+            np.save(os.path.join(base_dir, "Visium_patches_exp_processed", f"{patch_name}.npy"), patch)
     except Exception as e:
         print(f"Error processing sample {sample}: {e}")
 
@@ -90,10 +90,18 @@ def create_patch_matrix(base_dir: str, common_genes: list):
     """
     Create a matrix with only the common genes using multiprocessing.
     """
-    sample_names = [f.split(".")[0] for f in os.listdir(os.path.join(base_dir, "Visium", "image")) if f.endswith('.png')]
+    sample_names = [
+        f.split(".")[0]
+        for f in os.listdir(os.path.join(base_dir, "Visium", "image"))
+        if f.endswith('.png')
+    ]
     args = [(sample, base_dir, common_genes) for sample in sample_names]
-    with Pool(processes=cpu_count()) as pool:
-        list(tqdm(pool.imap(process_sample, args), total=len(sample_names)))
+
+    num_workers = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count()))
+    print(f"Starting with {num_workers} processes")
+    with Pool(processes=num_workers) as pool:
+        list(tqdm(pool.imap_unordered(process_sample, args), total=len(sample_names), desc="Processing samples"))
+
     print("Patch matrix creation complete.")
 
 def main():
@@ -105,8 +113,8 @@ def main():
     Image.MAX_IMAGE_PIXELS = 51150844200000
 
     base_dir = args.base_dir
-    os.makedirs(os.path.join(base_dir, "Visium_patch_images"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "Visium_patches_exp"), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "Visium_patch_images_processed"), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "Visium_patches_exp_processed"), exist_ok=True)
     preprocess_stimage_1k4m(base_dir)
 
     if args.common_genes_txt:
