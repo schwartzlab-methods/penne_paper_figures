@@ -89,12 +89,16 @@ def train(train_loader, val_loader,
         pcm_cell_to_idx_lower = {k.lower(): v for k, v in pcm_cell_to_idx.items()}
         signature = read_tsv(up_marker_genes)
         # convert the signature from gene names to gene symbols
-        template = pd.read_csv(gene_names, sep='\t', header=None)
-        feature_names = template.iloc[:, 0].tolist()
-        # print(feature_names)
-        name_to_symbol = {row[1]: row[0] for _, row in template.iterrows()}  # map from gene name to gene symbol
-        # convert the signature to gene symbols by mapping the dataframe
-        signature = signature.map(lambda x: name_to_symbol.get(x, x))  # map gene names to symbols
+        if gene_names.endswith(".tsv.gz"):
+            template = pd.read_csv(gene_names, sep='\t', header=None)
+            feature_names = template.iloc[:, 0].tolist()
+            # print(feature_names)
+            name_to_symbol = {row[1]: row[0] for _, row in template.iterrows()}  # map from gene name to gene symbol
+            # convert the signature to gene symbols by mapping the dataframe
+            signature = signature.map(lambda x: name_to_symbol.get(x, x))  # map gene names to symbols
+        else:
+            with open(gene_names, 'r') as f:
+                feature_names = [line.strip() for line in f.readlines()]
         # select only the cell type of interest
         enriched_gene_sets_name = {
             pcm_cell_to_idx_lower[celltype]: signature[celltype].dropna().tolist() for celltype in celltype_of_interest if celltype in signature.columns
@@ -104,6 +108,9 @@ def train(train_loader, val_loader,
             celltype: [1 if gene in enriched_genes else 0 for gene in feature_names]
             for celltype, enriched_genes in enriched_gene_sets_name.items()
         }
+        print("Gene sets processing completed. Number of marker genes for a celltype is as follows: ")
+        for celltype, genes in enriched_gene_sets.items():
+            print(f"{celltype}: {len(genes)}")
     else:
         enriched_gene_sets = None
         feature_names = None
