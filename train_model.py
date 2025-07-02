@@ -98,7 +98,7 @@ def train(train_loader, val_loader,
             signature = signature.map(lambda x: name_to_symbol.get(x, x))  # map gene names to symbols
         else:
             with open(gene_names, 'r') as f:
-                feature_names = [line.strip() for line in f.readlines()]
+                feature_names = [line.strip() for line in f.readlines() if "Unnamed" not in line]
         # select only the cell type of interest
         enriched_gene_sets_name = {
             pcm_cell_to_idx_lower[celltype]: signature[celltype].dropna().tolist() for celltype in celltype_of_interest if celltype in signature.columns
