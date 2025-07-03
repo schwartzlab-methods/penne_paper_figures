@@ -33,7 +33,6 @@ def find_common_genes(csv_files: str):
     """
     Find common genes in the given csv files.
     !TODO: Filter by the number of genes in the csv? some files may have very few genes
-    !TODO: Filter by pixel sizes (ie: ignore all super small patches)
     """
     save_path = os.path.join(os.path.dirname(os.path.dirname(csv_files[0])))
     print("Common genes will be saved to ", save_path)
@@ -80,9 +79,12 @@ def process_sample(args):
                 print(f"Skipping patch {patch_name} for sample {sample} due to out of bounds coordinates.")
                 continue
             patch_image = image.crop((x, y, x + 2 * radius, y + 2 * radius))
-            # save image and numpy
-            patch_image.save(os.path.join(base_dir, "Visium_patch_images_processed", f"{patch_name}.png"))
-            np.save(os.path.join(base_dir, "Visium_patches_exp_processed", f"{patch_name}.npy"), patch)
+            if patch_image.size[0] * patch_image.size[1] < 128:
+                print("Image too small, skipping ...")
+            else:
+                # save image and numpy
+                patch_image.save(os.path.join(base_dir, "Visium_patch_images_filtered_processed", f"{patch_name}.png"))
+                np.save(os.path.join(base_dir, "Visium_patches_exp_filtered_processed", f"{patch_name}.npy"), patch)
     except Exception as e:
         print(f"Error processing sample {sample}: {e}")
 
@@ -113,8 +115,8 @@ def main():
     Image.MAX_IMAGE_PIXELS = 51150844200000
 
     base_dir = args.base_dir
-    os.makedirs(os.path.join(base_dir, "Visium_patch_images_processed"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "Visium_patches_exp_processed"), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "Visium_patch_images_filtered_processed"), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, "Visium_patches_exp_filtered_processed"), exist_ok=True)
     preprocess_stimage_1k4m(base_dir)
 
     if args.common_genes_txt:
