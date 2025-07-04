@@ -43,9 +43,11 @@ def main():
     pre_res = gp.prerank(
         rnk=df,
         gene_sets=args.gene_sets,
-        threads=4,  # parallel computation
+        threads=4,
+        min_size=1,
+        max_size=1000,
         outdir=args.output,
-        format='png',  # Save plots in PNG format
+        format='png',
         permutation_num=10000,
         seed=42,
         verbose=True

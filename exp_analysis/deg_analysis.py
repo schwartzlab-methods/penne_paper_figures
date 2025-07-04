@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--cell_types', type=str, required=True, nargs="+", help='The two cell types to compare')
     parser.add_argument('--output', type=str, required=True, help='Output directory for results')
     parser.add_argument('--gt', type=str, default=None, help='Path to the ground truth RNA seq .gct file (optional)')
+    parser.add_argument('--gene_template', type=str, default=None, help='Path to the tsv file for mapping gene symbols tp gene names (optinal)')
     args = parser.parse_args()
     if not os.path.exists(args.output):
         os.makedirs(args.output)
@@ -49,6 +50,13 @@ def main():
         gt_data = parse(args.gt).data_df
         gt_data.index = [x.split(".")[0] for x in gt_data.index]  # remove the version number from gene names
         gt_data.columns = [x.split("_")[0].lower() for x in gt_data.columns]  # get cell names
+
+        if args.gene_template:
+            # convert the signature from gene names to gene symbols
+            template = pd.read_csv(args.gene_template, sep='\t', header=None)
+            name_to_symbol = {row[0]: row[1] for _, row in template.iterrows()}  # map from gene symbols to gene names
+            # convert the signature to gene symbols by mapping the dataframe
+            gt_data.index = [name_to_symbol[name] if name in name_to_symbol.keys() else name for name in gt_data.index]  # map gene names to symbols
 
         # check if the ground truth data has the two cell types
         if not all(cell.lower() in gt_data.columns for cell in args.cell_types):
@@ -85,6 +93,7 @@ def main():
     cell_type_mask = np.isin(cell_types, args.cell_types)
     counts = counts[cell_type_mask]
     cell_types = cell_types[cell_type_mask].astype(str)
+    print(f"Analyzing {cell_types.shape[0]} cells")
 
     # Create a DataFrame for the counts
     counts_df = pd.DataFrame(counts, columns=gene_names)
@@ -122,6 +131,9 @@ def main():
     p_values = [result.pvalues.iloc[1] for result in results]
     coefficients = [result.params.iloc[1] for result in results]
     print("Final number of genes analyzed: ", len(new_gene_names))
+    if len(new_gene_names) == 0:
+        print("No news with sufficient expressions found. Program ends.")
+        return 0
     # Create a DataFrame for the results
     if args.gt is not None:
         # add the ground truth log2 fold change to the results
