@@ -99,6 +99,7 @@ def train(train_loader, val_loader,
         else:
             with open(gene_names, 'r') as f:
                 feature_names = [line.strip() for line in f.readlines() if "Unnamed" not in line]
+                assert len(feature_names) == num_genes, "Number of genes in dataset does not match number of feature names"
         # select only the cell type of interest
         enriched_gene_sets_name = {
             pcm_cell_to_idx_lower[celltype]: signature[celltype].dropna().tolist() for celltype in celltype_of_interest if celltype in signature.columns
