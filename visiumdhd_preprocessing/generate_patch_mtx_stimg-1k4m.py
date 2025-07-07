@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import argparse
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 
 def preprocess_stimage_1k4m(base_dir: str):
     """
