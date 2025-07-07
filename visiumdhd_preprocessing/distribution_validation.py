@@ -1,6 +1,7 @@
 '''
 Plot the cumulative distribution of gene expressions wrt total gene exp per cell
 '''
+from cmapPy.pandasGEXpress.parse_gct import parse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -22,6 +23,9 @@ def plot_distribution(data, labels, save_dir, exp_name):
     - save_dir: directory to save the plots
     - exp_name: name of the experiment for saving the plot
     """
+
+    # undo the predicted log2 transformation
+    data = np.power(2, data) - 1 
 
     # normalize to 10e6 and log2 transform the data
     data = data / np.sum(data, axis=1, keepdims=True) * 1e6
@@ -94,10 +98,27 @@ def main():
             else:
                 sample_name = os.path.basename(os.path.dirname(path))
                 sample_L.append([sample_name] * data.shape[0])
+        elif path.endswith(".gct"): #if it is a gct file
+            data = parse(path).data_df.to_numpy()
+            data_L.append(data)
+            if args.sample_names:
+                sample_L.extend([args.sample_names[idx]] * data.shape[0])
+            else:
+                sample_name = os.path.basename(os.path.dirname(path))
+                sample_L.append([sample_name] * data.shape[0])
         else:
             for file in tqdm(os.listdir(path)):
                 if file.endswith('.npy'):
                     data = np.load(os.path.join(path, file))
+                    data_L.append(data)
+                    if args.sample_names:
+                        sample_L.append(args.sample_names[idx])
+                    else:
+                        # sample name is the third last part of the direcotry structure
+                        sample_name = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
+                        sample_L.append(sample_name)
+                elif file.endswith('.gct'):
+                    data = parse(os.path.join(path, file)).data_df.to_numpy()
                     data_L.append(data)
                     if args.sample_names:
                         sample_L.append(args.sample_names[idx])
