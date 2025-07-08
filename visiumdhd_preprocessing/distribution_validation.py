@@ -63,7 +63,7 @@ def plot_distribution(data, labels, save_dir, exp_name):
                          mean_cdf[label] - std_cdf[label],
                          mean_cdf[label] + std_cdf[label],
                          alpha=0.2)
-    plt.title(f"Cumulative Distribution of Gene Expression - {exp_name}")
+    plt.title("Cumulative Distribution of Gene Expression")
     plt.xlabel("Genes (sorted by expression)")
     plt.ylabel("Cumulative Distribution Function (CDF)")
     plt.legend(title="Sample")
@@ -126,11 +126,20 @@ def main():
                         # sample name is the third last part of the direcotry structure
                         sample_name = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(path))))
                         sample_L.append(sample_name)
+    
+    # fill 0 for entries that are not in the same shape
+    print("Concating data...")
+    max_shape = max(data.shape[1] for data in data_L)
+    for i in tqdm(range(len(data_L))):
+        if data_L[i].shape[1] < max_shape:
+            padding = np.zeros((data_L[i].shape[0], max_shape - data_L[i].shape[1]))
+            data_L[i] = np.concatenate((data_L[i], padding), axis=1)
     # Concatenate all data
     data = np.concatenate(data_L, axis=0)
     assert len(sample_L) == data.shape[0], f"Found shape {len(sample_L)} and {data.shape[0]}"
 
     # Plot the distribution
+    print("Plotting CDF...")
     plot_distribution(data, sample_L, args.save_dir, args.exp_name)
 
 if __name__ == "__main__":
