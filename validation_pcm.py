@@ -23,7 +23,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--img_dir', type=str, nargs="+", help='Directory containing the LIVECell images (or other PCM images)')
     parser.add_argument('--model_dir', type=str, help='Directory containing the model checkpoints')
-    parser.add_argument('--gene_names', type=str, help='Path to the gene names feature tsv or txt file')#! add to support txt
+    parser.add_argument('--gene_names', type=str, help='Path to the gene names feature tsv or txt file')
     parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument("--u373_dataset", action="store_true", help="use the u373 dataset instead of the livecell data")
@@ -53,7 +53,7 @@ def main():
         gene_names = genes[:,1].reshape(-1)
         gene_symbols = genes[:,0].reshape(-1)
         np.save(os.path.join(args.output_dir, f"{args.name}_gene_symbols.npy"), gene_symbols)
-    else:
+    else: # assume txt file
         with open(args.gene_names, 'r') as f:
             gene_names = [line.strip() for line in f.readlines() if "Unnamed: 0" not in line]
         gene_names = np.array(gene_names).reshape(-1)

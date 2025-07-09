@@ -142,7 +142,9 @@ def main():
             'p_value': p_values,
             'log_fc': coefficients,
             'log_fc_gt': l2fc_gt_L,
-            "correct_dir": ["Same" if np.sign(coeff) == np.sign(gt) else "Different" for coeff, gt in zip(coefficients, l2fc_gt_L)]
+            # "correct_dir": ["Same" if (np.sign(coeff) == np.sign(gt)) and 
+            #                 else "Different" 
+            #                 for coeff, gt in zip(coefficients, l2fc_gt_L)]
         })
     else:
         results_df = pd.DataFrame({
@@ -153,6 +155,12 @@ def main():
     # Adjust p-values for multiple testing
     results_df['adj_p_value'] = sm.stats.multipletests(results_df['p_value'], method='fdr_bh')[1]
     results_df['Adj p < 0.05 and |Log2FC| > 1'] = results_df.apply(lambda x: (x["adj_p_value"] < 0.05) and (np.absolute(x["log_fc"]) > 1), axis=1).astype(str)
+    if args.gt is not None:
+        results_df['correct_dir'] = results_df.apply(lambda x: "Same" if (np.sign(x['log_fc']) == np.sign(x['log_fc_gt'])) and x["adj_p_value"] < 0.05
+                                                     else "Different" if (np.sign(x['log_fc']) != np.sign(x['log_fc_gt'])) and x["adj_p_value"] < 0.05 
+                                                     else "Same_nonsignificant" if (np.sign(x['log_fc']) == np.sign(x['log_fc_gt']))
+                                                     else "Different_nonsignificant", axis=1)
+
     # Save results
     results_df.to_csv(os.path.join(args.output, f'deg_ref_{args.cell_types[0]}vs{args.cell_types[1]}.csv'), index=False)
     # Plot results

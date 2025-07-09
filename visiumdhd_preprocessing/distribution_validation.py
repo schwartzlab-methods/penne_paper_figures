@@ -32,7 +32,7 @@ def plot_distribution(data, labels, save_dir, exp_name):
     data = np.log2(data + 1)
 
     cdf_dic = {}
-    print("Calculating CDF data")
+    print("Calculating CDF data...")
     for i, label in enumerate(tqdm(labels)):
         x = data[i, :].flatten()
         x_sorted = np.sort(x)[::-1]  # sort in descending order

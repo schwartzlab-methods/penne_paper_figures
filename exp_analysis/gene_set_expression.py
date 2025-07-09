@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
 import os
-from functools import reduce
+# from functools import reduce
 from tqdm import tqdm
 
 def read_tsv(file_path):
