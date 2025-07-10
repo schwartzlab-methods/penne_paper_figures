@@ -82,6 +82,40 @@ class Predictor(nn.Module):
         x = F.relu(self.fc3(x))
         return x
 
+class GatedMLPBlock(nn.Module):
+    def __init__(self, input_size, hidden_size, p=0.2):
+        super(GatedMLPBlock, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, input_size)
+        self.gate = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, input_size),
+            nn.Sigmoid()
+        )
+        self.norm = nn.LayerNorm(input_size)
+        self.dropout = nn.Dropout(p) # Dropout layer to prevent overfitting
+
+    def forward(self, x):
+        gate = self.gate(x)
+        x_proj = self.fc2(self.dropout(F.gelu(self.fc1(x))))
+        return self.norm(x + gate * x_proj)
+
+class PredictorGMLP(nn.Module):
+    # Predicts the whole transcriptome from the image using a Gated MLP
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers=3, dropout=0.2):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            GatedMLPBlock(input_dim, hidden_dim, dropout)
+            for _ in range(num_layers)
+        ])
+        self.output_proj = nn.Linear(input_dim, output_dim)
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return self.output_proj(x)  # Final gene expression vector
+
 #! modules for SPAGHETTI
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels):

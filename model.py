@@ -14,12 +14,16 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  second_order_weight=0.1,
                  cell_type_weight=0.0,
                  marker_gene_weight=0.0,
-                 lr=1e-3):
+                 lr=1e-3,
+                 do_gmlp=True):
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
         self.translator = modules.Translator().to(self.device)
         self.domain_discriminator = modules.DomainDiscriminator(alpha=domain_weight).to(self.device)
-        self.predictor = modules.Predictor(input_size=1024, hidden_size=4056, output_size=num_genes).to(self.device)
+        if do_gmlp: # Use Gated MLP for prediction
+            self.predictor = modules.PredictorGMLP(input_size=1024, hidden_size=4056, output_size=num_genes).to(self.device)
+        else:
+            self.predictor = modules.Predictor(input_size=1024, hidden_size=4056, output_size=num_genes).to(self.device)
         if up_marker_genes:
             self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types).to(self.device)
             self.up_marker_genes_dict = up_marker_genes
