@@ -103,18 +103,21 @@ class GatedMLPBlock(nn.Module):
 
 class PredictorGMLP(nn.Module):
     # Predicts the whole transcriptome from the image using a Gated MLP
-    def __init__(self, input_dim, hidden_dim, output_dim, num_layers=3, dropout=0.2):
+    def __init__(self, input_size, hidden_size, output_size, num_layers=3, dropout=0.2):
         super().__init__()
         self.layers = nn.ModuleList([
-            GatedMLPBlock(input_dim, hidden_dim, dropout)
+            GatedMLPBlock(input_size, hidden_size, dropout)
             for _ in range(num_layers)
         ])
-        self.output_proj = nn.Linear(input_dim, output_dim)
+        self.output_proj = nn.Linear(input_size, output_size) #make gene expression prediction
 
-    def forward(self, x):
+    def forward(self, x, return_gate = False):
         for layer in self.layers:
             x = layer(x)
-        return self.output_proj(x)  # Final gene expression vector
+        if return_gate:
+            return x
+        else:
+            return self.output_proj(x)  # Final gene expression vector
 
 #! modules for SPAGHETTI
 class ResidualBlock(nn.Module):

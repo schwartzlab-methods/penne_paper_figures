@@ -85,6 +85,15 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             x = self.translator(x)
         return x
     
+    def compute_gate(self, x, if_convert=False, if_translate=True):
+        if if_convert:
+            x = self.converter(self.device, x)
+        x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1).detach()
+        if if_translate:
+            x = self.translator(x)
+        x = self.predictor(x, retrun_gate=True)
+        return x
+    
     def _marker_margin_loss(self, pred_expr, cell_types, marker_dict, margin=1.0):
         loss = 0.0
         for i in range(pred_expr.size(0)):
