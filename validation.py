@@ -134,9 +134,11 @@ def main():
     gt_L = []
     features_he_L = []
     features_he_non_translated_L = []
+    features_he_translated_gated_L = []
     features_pcm_L = []
     features_pcm_non_translate_L = []
     features_pcm_non_convert_L = []
+    features_pcm_translated_gated_L = []
     img_path_L = []
     with torch.no_grad():
         for batch in tqdm(val_loader, total=len(val_loader)):
@@ -148,6 +150,8 @@ def main():
             features_pcm = model.compute_feature(pcm, if_convert=True, if_translate=True)
             features_pcm_non_translate = model.compute_feature(pcm, if_convert=True, if_translate=False)
             features_pcm_non_convert = model.compute_feature(pcm, if_convert=False, if_translate=False)
+            features_he_translated_gated = model.compute_gate(he_image, if_convert=False, if_translate=True)
+            features_pcm_translated_gated = model.compute_gate(pcm, if_convert=True, if_translate=True)
             # remove all negative values
             pred_exp[pred_exp < 0] = 0
             pred_L.append(pred_exp.cpu().numpy())
@@ -157,14 +161,18 @@ def main():
             features_pcm_L.append(features_pcm.cpu().numpy())
             features_pcm_non_translate_L.append(features_pcm_non_translate.cpu().numpy())
             features_pcm_non_convert_L.append(features_pcm_non_convert.cpu().numpy())
+            features_he_translated_gated_L.append(features_he_translated_gated)
+            features_pcm_translated_gated_L.append(features_pcm_translated_gated)
             img_path_L.append(image_path[0])
     pred = np.concatenate(pred_L, axis=0)
     true = np.concatenate(gt_L, axis=0)
     he_features_translated = np.concatenate(features_he_L, axis=0)
     he_features_non_translated = np.concatenate(features_he_non_translated_L, axis=0)
+    he_features_translated_gated = np.concatenate(features_he_translated_gated_L, axis=0)
     pcm_features_translated = np.concatenate(features_pcm_L, axis=0)
     pcm_features_non_translated = np.concatenate(features_pcm_non_translate_L, axis=0)
     pcm_features_non_converted  = np.concatenate(features_pcm_non_convert_L, axis=0)
+    pcm_features_translated_gated = np.concatenate(features_pcm_translated_gated_L, axis=0)
     imgs = np.array(img_path_L)
     print(f"Final prediction shape: {pred.shape}") # spots x features
     print("Finished generating predictions")
@@ -173,7 +181,9 @@ def main():
     np.save(os.path.join(args.output_dir, "pred.npy"), pred)
     np.save(os.path.join(args.output_dir, "true.npy"), true)
     np.save(os.path.join(args.output_dir, "he_features_translated.npy"), he_features_translated)
+    np.save(os.path.join(args.output_dir, "he_features_translated_gated.npy"), he_features_translated_gated)
     np.save(os.path.join(args.output_dir, "he_features_non_translated.npy"), he_features_non_translated)
+    np.save(os.path.join(args.output_dir, "pcm_features_translated_gated.npy"), pcm_features_translated_gated)
     np.save(os.path.join(args.output_dir, "pcm_features_translated.npy"), pcm_features_translated)
     np.save(os.path.join(args.output_dir, "pcm_features_non_translated.npy"), pcm_features_non_translated)
     np.save(os.path.join(args.output_dir, "pcm_features_non_converted.npy"), pcm_features_non_converted)
