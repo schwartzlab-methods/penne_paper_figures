@@ -111,12 +111,15 @@ def train(train_loader, val_loader,
         }
         print("Gene sets processing completed. Number of marker genes for a celltype is as follows: ")
         for celltype, genes in enriched_gene_sets.items():
-            print(f"{celltype}: {len(genes)}")
+            print(f"{celltype}: {sum(genes)}")
+        print("The cell type name to index is:")
+        print(pcm_cell_to_idx_lower)
     else:
         enriched_gene_sets = None
         feature_names = None
 
     # create model
+    print("Preparing training model ...")
     lit_model = GeneExpPredVisiumHD(num_genes, 
                                     converter, feature_extractor,
                                     num_cell_types=num_cell_types,
@@ -171,6 +174,7 @@ def main():
     print(args)
 
     # create dataset
+    print("Preparing datasets ...")
     dataset_L = []
     for i in tqdm(range(len(args.visiumhd_dir))):
         dataset_L.append(VisiumHD_Livecell_Dataset(args.visiumhd_dir[i], args.mtx_dir[i], args.livecell_dir))
