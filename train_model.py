@@ -115,6 +115,7 @@ def train(train_loader, val_loader,
         print("The cell type name to index is:")
         print(pcm_cell_to_idx_lower)
     else:
+        print("No marker genes provided. Starting stage ONE training...")
         enriched_gene_sets = None
         feature_names = None
 
