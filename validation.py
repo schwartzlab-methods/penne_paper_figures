@@ -2,6 +2,7 @@
 Validate the gene expression predictor
 '''
 import torch
+import random
 import os
 import scanpy as sc
 import numpy as np
@@ -140,30 +141,32 @@ def main():
     features_pcm_non_convert_L = []
     features_pcm_translated_gated_L = []
     img_path_L = []
+    data_len = len(val_loader)
     with torch.no_grad():
         for batch in tqdm(val_loader, total=len(val_loader)):
-            he_image, mtx, pcm, image_path, _ = batch
-            pred_exp = model.forward(he_image, if_convert=False)
-            # compute some features
-            features_he = model.compute_feature(he_image, if_convert=False, if_translate=True)
-            features_he_non_translated = model.compute_feature(he_image, if_convert=False, if_translate=False)
-            features_pcm = model.compute_feature(pcm, if_convert=True, if_translate=True)
-            features_pcm_non_translate = model.compute_feature(pcm, if_convert=True, if_translate=False)
-            features_pcm_non_convert = model.compute_feature(pcm, if_convert=False, if_translate=False)
-            features_he_translated_gated = model.compute_gate(he_image, if_convert=False, if_translate=True)
-            features_pcm_translated_gated = model.compute_gate(pcm, if_convert=True, if_translate=True)
-            # remove all negative values
-            pred_exp[pred_exp < 0] = 0
-            pred_L.append(pred_exp.cpu().numpy())
-            gt_L.append(mtx.cpu().numpy())
-            features_he_L.append(features_he.cpu().numpy())
-            features_he_non_translated_L.append(features_he_non_translated.cpu().numpy())
-            features_pcm_L.append(features_pcm.cpu().numpy())
-            features_pcm_non_translate_L.append(features_pcm_non_translate.cpu().numpy())
-            features_pcm_non_convert_L.append(features_pcm_non_convert.cpu().numpy())
-            features_he_translated_gated_L.append(features_he_translated_gated)
-            features_pcm_translated_gated_L.append(features_pcm_translated_gated)
-            img_path_L.append(image_path[0])
+            if (data_len < 100000) or (random.random() > 0.8):
+                he_image, mtx, pcm, image_path, _ = batch
+                pred_exp = model.forward(he_image, if_convert=False)
+                # compute some features
+                features_he = model.compute_feature(he_image, if_convert=False, if_translate=True)
+                features_he_non_translated = model.compute_feature(he_image, if_convert=False, if_translate=False)
+                features_pcm = model.compute_feature(pcm, if_convert=True, if_translate=True)
+                features_pcm_non_translate = model.compute_feature(pcm, if_convert=True, if_translate=False)
+                features_pcm_non_convert = model.compute_feature(pcm, if_convert=False, if_translate=False)
+                features_he_translated_gated = model.compute_gate(he_image, if_convert=False, if_translate=True)
+                features_pcm_translated_gated = model.compute_gate(pcm, if_convert=True, if_translate=True)
+                # remove all negative values
+                pred_exp[pred_exp < 0] = 0
+                pred_L.append(pred_exp.cpu().numpy())
+                gt_L.append(mtx.cpu().numpy())
+                features_he_L.append(features_he.cpu().numpy())
+                features_he_non_translated_L.append(features_he_non_translated.cpu().numpy())
+                features_pcm_L.append(features_pcm.cpu().numpy())
+                features_pcm_non_translate_L.append(features_pcm_non_translate.cpu().numpy())
+                features_pcm_non_convert_L.append(features_pcm_non_convert.cpu().numpy())
+                features_he_translated_gated_L.append(features_he_translated_gated.cpu().numpy())
+                features_pcm_translated_gated_L.append(features_pcm_translated_gated.cpu().numpy())
+                img_path_L.append(image_path[0])
     pred = np.concatenate(pred_L, axis=0)
     true = np.concatenate(gt_L, axis=0)
     he_features_translated = np.concatenate(features_he_L, axis=0)
@@ -210,7 +213,11 @@ def main():
     spot_corr_df.to_csv(os.path.join(args.output_dir, f'spot_correlation_{args.name}.csv'))
 
     #! across genes correlation
-    gene_names = pd.read_csv(args.gene_names, sep="\t", header = None)[0].values
+    if args.gene_names.endswith("tsv.gz"):
+        gene_names = pd.read_csv(args.gene_names, sep="\t", header = None)[1].values
+    else:
+        with open(args.gene_names, 'r') as f:
+            gene_names = [line.strip() for line in f.readlines() if "Unnamed: 0" not in line]
     corr = np.zeros(pred.shape[1])
     for i in range(pred.shape[1]):
         corr[i] = np.corrcoef(pred[:,i], true[:,i],)[0,1] #corrcoef returns a matrix
