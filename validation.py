@@ -114,7 +114,7 @@ def main():
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
-    os.makedirs(args.output_dir, exists=ok)
+    os.makedirs(args.output_dir, exist_ok=True)
     # create dataset
     dataset_L = []
     for i in range(len(args.visiumhd_dir)):
