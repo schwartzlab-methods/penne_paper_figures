@@ -156,8 +156,8 @@ def main():
     results_df['adj_p_value'] = sm.stats.multipletests(results_df['p_value'], method='fdr_bh')[1]
     results_df['Adj p < 0.05 and |Log2FC| > 1'] = results_df.apply(lambda x: (x["adj_p_value"] < 0.05) and (np.absolute(x["log_fc"]) > 1), axis=1).astype(str)
     if args.gt is not None:
-        results_df['correct_dir'] = results_df.apply(lambda x: "Same" if (np.sign(x['log_fc']) == np.sign(x['log_fc_gt'])) and x["adj_p_value"] < 0.05
-                                                     else "Different" if (np.sign(x['log_fc']) != np.sign(x['log_fc_gt'])) and x["adj_p_value"] < 0.05 
+        results_df['correct_dir'] = results_df.apply(lambda x: "Same_significant" if (np.sign(x['log_fc']) == np.sign(x['log_fc_gt'])) and x["adj_p_value"] < 0.05
+                                                     else "Different_significant" if (np.sign(x['log_fc']) != np.sign(x['log_fc_gt'])) and x["adj_p_value"] < 0.05 
                                                      else "Same_nonsignificant" if (np.sign(x['log_fc']) == np.sign(x['log_fc_gt']))
                                                      else "Different_nonsignificant", axis=1)
 
