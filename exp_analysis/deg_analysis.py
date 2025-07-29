@@ -82,6 +82,7 @@ def main():
             print("GT processed, running DGE on data")
 
     # revert the log2 transform in the prediction
+    counts = np.clip(counts, 0, None)
     counts = 2**counts - 1
 
     # normalize to counts per million
@@ -191,11 +192,12 @@ def main():
     if args.gt is not None:
         # create a bar plot of the correct direction of the log2 fold change
         plt.figure(figsize=(10, 6))
-        sns.countplot(data=results_df, x='correct_dir')
+        sns.countplot(data=results_df, x='correct_dir', order=["Same_significant", "Same_nonsignificant", "Different_significant", "Different_nonsignificant"])
         plt.title(f'Correct Direction of Log2 FC: {args.cell_types[0]} vs {args.cell_types[1]}')
         plt.xlabel('Correct Direction')
         plt.ylabel('Count')
         plt.savefig(os.path.join(args.output, f'correct_direction_ref_{args.cell_types[0]}vs{args.cell_types[1]}.png'))
+        plt.close()
 
 if __name__ == "__main__":
     main()

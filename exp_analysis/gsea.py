@@ -45,7 +45,7 @@ def main():
         gene_sets=args.gene_sets,
         threads=4,
         min_size=1,
-        max_size=1000,
+        max_size=10000,
         outdir=args.output,
         format='png',
         permutation_num=10000,
