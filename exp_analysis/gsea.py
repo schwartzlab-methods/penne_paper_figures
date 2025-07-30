@@ -9,19 +9,7 @@ import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
-def main():
-    parser = argparse.ArgumentParser(description="GSEA analysis")
-    parser.add_argument('--csv', type=str, required=True, help='Path to the csv file with LFC values')
-    parser.add_argument('--output', type=str, required=True, help='Directory to save the GSEA results')
-    parser.add_argument('--mapping_dict', type=str, default=None, help='features.tsv file for converting gene names to gene symbols.')
-    parser.add_argument('--gene_sets', type=str, nargs="+", default=["MSigDB_Hallmark_2020"], 
-                        help='Path to the gene sets file (GMT format or a string with names from GSEA). ' \
-                        'If not provided, will use the default of MSigDB_Hallmark_2020.')
-    args = parser.parse_args()
-    if not os.path.exists(args.output):
-        os.makedirs(args.output)
-
+def pre_rank(args):
     # Load the csv file
     df = pd.read_csv(args.csv)
     # sort by metrics values (-log p-value * sign)
@@ -95,6 +83,70 @@ def main():
     plt.tight_layout()
     plt.savefig(os.path.join(args.output, 'gsea_results_btm.png'))
     plt.close()
+
+def enrichr(args):
+    # Load the csv file
+    with open(args.txt, 'r') as f:
+        genes = f.read().splitlines()
+    
+    if args.mapping_dict:
+        # Load the mapping dictionary
+        template = pd.read_csv(args.mapping_dict, sep='\t')
+        name_to_symbol = {row.iloc[0]: row.iloc[1] for _, row in template.iterrows()}  # map from gene symbol to name
+        # Convert the gene names to gene symbols
+        df['gene'] = df['gene'].map(name_to_symbol)
+        # Drop rows with NaN values in the 'gene' column
+        df = df.dropna(subset=['gene'])
+        print("Size of the dataframe:", df.shape)        
+
+    enr_res = gp.enrichr(
+        gene_list=genes,
+        gene_sets=args.gene_sets,
+        outdir=args.output,
+        cutoff=0.05,  # Only consider terms with p-value < 0.05
+        verbose=True
+    )
+
+    # Sort by combined score and select top 10 UP enriched
+    top_terms_sorted = enr_res.res2d.sort_values("Combined Score", ascending=False)
+    top_terms_sorted = top_terms_sorted[top_terms_sorted["Adjusted P-value"] < 0.05]
+    top_terms_sorted = top_terms_sorted[top_terms_sorted["Combined Score"] > 0].head(10)
+    plt.figure(figsize=(10, 6))
+    sns.barplot(
+        x="Combined Score",
+        y="Term",
+        data=top_terms_sorted,
+        orient='h'
+    )
+    plt.title("Combined Scores (Top Enrichr Hits)")
+    plt.xlabel("Combined Score")
+    plt.ylabel("Gene Set")
+    plt.title("Top Positively Enriched Gene Sets")
+    plt.tight_layout()
+    plt.savefig(os.path.join(args.output, 'enrichr_results_top.png'))
+    plt.close()
+
+def main():
+    parser = argparse.ArgumentParser(description="GSEA analysis")
+    parser.add_argument('--csv', type=str, help='Path to the csv file with LFC values. Needed for prerank GSEA.')
+    parser.add_argument('--txt', type=str, help='Path to the txt file with DE genes. Needed for enrichr GSEA.')
+    parser.add_argument('--output', type=str, required=True, help='Directory to save the GSEA results')
+    parser.add_argument('--mapping_dict', type=str, default=None, help='features.tsv file for converting gene names to gene symbols.')
+    parser.add_argument('--gene_sets', type=str, nargs="+", default=["MSigDB_Hallmark_2020"], 
+                        help='Path to the gene sets file (GMT format or a string with names from GSEA). ' \
+                        'If not provided, will use the default of MSigDB_Hallmark_2020.')
+    args = parser.parse_args()
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+    
+    if args.csv:
+        print("Running prerank GSEA...")
+        pre_rank(args)
+    elif args.txt:
+        print("Running Enrichr GSEA...")
+        enrichr(args)
+    else:
+        raise ValueError("Please provide either --csv for prerank GSEA or --txt for Enrichr GSEA.")
 
 if __name__ == "__main__":
     main()
