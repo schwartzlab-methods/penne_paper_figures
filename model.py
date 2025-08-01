@@ -104,7 +104,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # The marker genes should be more expressed in the target cell type than in any other cell type
             unique_cell_types = torch.unique(cell_types)
             for cell_type in unique_cell_types:
-                marker_genes = torch.tensor(marker_dict[cell_type])
+                marker_genes = torch.tensor(marker_dict[cell_type.item()])
                 num_marker_genes = marker_genes.sum().item()
                 if num_marker_genes == 0:
                     continue

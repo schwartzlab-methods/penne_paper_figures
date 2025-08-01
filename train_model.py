@@ -154,6 +154,7 @@ def main():
     # seeds for reproducibility
     torch.manual_seed(42)
     pl.seed_everything(42, workers=True)
+    torch.set_float32_matmul_precision('high')
     # arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--visiumhd_dir', type=str, nargs="+", help='Directory containing the VisiumHD patches')
@@ -191,7 +192,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
     print("Data loader created")
     # create feature extractor
-    feature_extractor = AutoModel.from_pretrained("/fs01/home/richarddong/.cache/huggingface/hub/phikon-v2")
+    feature_extractor = AutoModel.from_pretrained("owkin/phikon-v2")
     image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
     # prepare spaghetti model
     spaghetti = init_spaghetti(args.spaghetti_model)
@@ -205,6 +206,7 @@ def main():
           celltypes=dataset.datasets[0].livecell_class_to_idx.keys(),
           cell_type_loss_weight=args.cell_type_loss_weight,
           marker_gene_loss_weight=args.marker_gene_loss_weight,
+          marker_across_cell=args.marker_across_cell,
           converter=lambda device, x: spaghetti_convertion(spaghetti, device, x),
           feature_extractor=lambda device, x: owkin_features(feature_extractor, device, image_processor, x), 
           domain_weight=args.domain_weight, coral_loss_weight=args.coral_loss_weight,
