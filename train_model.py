@@ -61,6 +61,7 @@ def train(train_loader, val_loader,
           celltypes=None,
           cell_type_loss_weight=0.0,
           marker_gene_loss_weight=0,
+          marker_across_cell=False,
           domain_weight=5.0, coral_loss_weight=0.1,
           lr = 0.0001, save_dir = None, epochs=100, name="gene_predictor"):
     '''
@@ -129,7 +130,8 @@ def train(train_loader, val_loader,
                                     second_order_weight=coral_loss_weight,
                                     marker_gene_weight=marker_gene_loss_weight,
                                     cell_type_weight=cell_type_loss_weight,
-                                    lr=lr)
+                                    lr=lr, do_gmlp=True,
+                                    across_cell=marker_across_cell)
     # train model
     logger = CSVLogger(final_save_dir, name=name)
     trainer = pl.Trainer(max_epochs=epochs, devices=ngpus_per_node, num_nodes=num_nodes,
@@ -169,6 +171,8 @@ def main():
     parser.add_argument('--gene_names', type=str, default=None, help="Path to the tsv storing the list of gene names")
     parser.add_argument('--up_marker_genes', type=str, default=None, 
                             help='Path to up marker genes for PCM cell type. If supplied, stage two training will be performed.')
+    parser.add_argument('--marker_across_cell', action='store_true',
+                            help='If set, the marker gene loss will be calculated across all cells. If not set, the marker gene loss will be calculated within each cell type.')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
     print("Starting the training script with the following arguments:")

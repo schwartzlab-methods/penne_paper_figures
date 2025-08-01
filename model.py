@@ -15,7 +15,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  cell_type_weight=0.0,
                  marker_gene_weight=0.0,
                  lr=1e-3,
-                 do_gmlp=True):
+                 do_gmlp=True,
+                 across_cell=False):
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
         self.translator = modules.Translator().to(self.device)
@@ -37,6 +38,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.cell_type_weight = cell_type_weight
         self.marker_gene_weight = marker_gene_weight
         self.second_stage_training = True if up_marker_genes else False
+        self.across_cell = across_cell
         # loss functions
         self.criterion = nn.MSELoss().to(self.device)
         self.domain_criterion = nn.BCELoss().to(self.device)
@@ -94,26 +96,54 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         x = self.predictor(x, return_gate=True)
         return x
     
-    def _marker_margin_loss(self, pred_expr, cell_types, marker_dict, margin=1.0):
+    def _marker_margin_loss(self, pred_expr, cell_types, marker_dict, margin=1.0,
+                            across_cell=False):
         loss = 0.0
-        for i in range(pred_expr.size(0)):
-            cell_type = cell_types[i].item()
-            marker_genes = torch.tensor(marker_dict[cell_type])
-            num_marker_genes = marker_genes.sum().item()
-            if num_marker_genes == 0:
-                continue
-            non_marker_genes = 1 - marker_genes
-            # Sample a few non-marker genes to compare against
-            idx_non_marker = non_marker_genes.nonzero(as_tuple=False).flatten()
-            sampled_non = random.sample(range(idx_non_marker.shape[0]), num_marker_genes)
-            sampled_non_marker_genes_idx = idx_non_marker[sampled_non]
-            marker_vals = pred_expr[i, marker_genes.bool().to(self.device)].view(1,-1)
-            non_marker_vals = pred_expr[i, sampled_non_marker_genes_idx].view(1,-1)
-            # calculate loss
-            loss += F.margin_ranking_loss(
-                marker_vals, non_marker_vals, target=torch.ones_like(marker_vals), margin=margin
-            )
-        return loss / pred_expr.size(0)
+        if across_cell:
+            # Compare the marker gene exp across all cells. 
+            # The marker genes should be more expressed in the target cell type than in any other cell type
+            unique_cell_types = torch.unique(cell_types)
+            for cell_type in unique_cell_types:
+                marker_genes = torch.tensor(marker_dict[cell_type])
+                num_marker_genes = marker_genes.sum().item()
+                if num_marker_genes == 0:
+                    continue
+                # get the marker gene exp for this cell type and other cell types
+                marker_genes = marker_genes.bool().to(self.device)
+                current_cell_mask = (cell_types == cell_type).to(self.device)
+                pred_expr_current_cell = pred_expr[current_cell_mask, :]
+                pred_expr_other_cells = pred_expr[~current_cell_mask, :]
+                if (pred_expr_current_cell.size(0) == 0) or (pred_expr_other_cells.size(0) == 0):
+                    continue
+                # get the mean marker gene exp for each gene
+                marker_genes = marker_genes.to(self.device)
+                marker_expr_current_cell = pred_expr_current_cell[:, marker_genes].mean(dim=0, keepdim=True).view(1, -1)
+                marker_expr_other_cells = pred_expr_other_cells[:, marker_genes].mean(dim=0, keepdim=True).view(1, -1)
+                # calculate loss
+                loss += F.margin_ranking_loss(
+                    marker_expr_current_cell, marker_expr_other_cells,
+                    target=torch.ones_like(marker_expr_current_cell), margin=margin
+                )
+            return loss / unique_cell_types.size(0) 
+        else: # Compare the marker gene exp within each cell type
+            for i in range(pred_expr.size(0)):
+                cell_type = cell_types[i].item()
+                marker_genes = torch.tensor(marker_dict[cell_type])
+                num_marker_genes = marker_genes.sum().item()
+                if num_marker_genes == 0:
+                    continue
+                non_marker_genes = 1 - marker_genes
+                # Sample a few non-marker genes to compare against
+                idx_non_marker = non_marker_genes.nonzero(as_tuple=False).flatten()
+                sampled_non = random.sample(range(idx_non_marker.shape[0]), num_marker_genes)
+                sampled_non_marker_genes_idx = idx_non_marker[sampled_non]
+                marker_vals = pred_expr[i, marker_genes.bool().to(self.device)].view(1,-1)
+                non_marker_vals = pred_expr[i, sampled_non_marker_genes_idx].view(1,-1)
+                # calculate loss
+                loss += F.margin_ranking_loss(
+                    marker_vals, non_marker_vals, target=torch.ones_like(marker_vals), margin=margin
+                )
+            return loss / pred_expr.size(0)
 
     def training_step(self, batch, batch_idx):
         he_image, mtx, pcm_image, _, cell_type = batch
@@ -150,7 +180,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
             # marker gene loss
-            marker_gene_loss = self.marker_gene_weight * self._marker_margin_loss(pred_exp_pcm, cell_type, self.up_marker_genes_dict)
+            marker_gene_loss = self.marker_gene_weight * self._marker_margin_loss(pred_exp_pcm, cell_type, 
+                                                                                  self.up_marker_genes_dict, across_cell=self.across_cell)
 
             # total loss for training
             total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
@@ -196,7 +227,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
                 # marker gene loss
-                marker_gene_loss = self.marker_gene_weight * self._marker_margin_loss(pred_exp_pcm, cell_type, self.up_marker_genes_dict)
+                marker_gene_loss = self.marker_gene_weight * self._marker_margin_loss(pred_exp_pcm, cell_type, 
+                                                                                      self.up_marker_genes_dict, across_cell=self.across_cell)
 
                 # total loss for training
                 total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
