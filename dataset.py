@@ -108,7 +108,8 @@ class TrizinaCaco2Dataset(Dataset):
         img = torch.clamp(img, max=1, min=0) #ensure no float overflow
         treatment = self.treatment[idx]
         treatment_idx = 0 if treatment.lower() == "ctrl" else 1
-        return img, (treatment_idx, self.images[idx], treatment)
+        return img, (treatment_idx, self.images[idx], 
+                    "camptothecin" if treatment_idx == 1 else "Ctrl")
     
     def __len__(self):
         return len(self.images)
