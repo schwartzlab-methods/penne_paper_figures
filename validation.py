@@ -125,7 +125,7 @@ def main():
     # create dataloaders
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
     # create feature extractor
-    feature_extractor = AutoModel.from_pretrained("/fs01/home/richarddong/.cache/huggingface/hub/phikon-v2")
+    feature_extractor = AutoModel.from_pretrained("owkin/phikon-v2")
     image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
     model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_dir, num_genes = dataset.datasets[0].num_genes, 
                                 converter = lambda device, x: spaghetti_convertion(init_spaghetti(args.spaghetti_model), device, x), 
