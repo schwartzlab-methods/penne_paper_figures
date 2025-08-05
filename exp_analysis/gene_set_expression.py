@@ -80,7 +80,8 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         sns.violinplot(
             x=label_series.isin([cell_type]).map({True: cell_type, False: "Other"}),
             y=module_score,
-            palette="muted"
+            palette="muted",
+            order=[cell_type, "Other"]
         )
         plt.title(f"Mean Log2-Normalized Expression for {cell_type} Marker Genes")
         plt.ylabel("Mean Log2-Normalized Expression of Gene Set")
@@ -93,7 +94,8 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         sns.violinplot(
             x=["Marker"]*len(target_scores.tolist()) + ["Other"]*len(complement_scores.tolist()),
             y=target_scores.tolist()+complement_scores.tolist(),
-            palette="muted"
+            palette="muted",
+            order=["Marker", "Other"]
         )
         plt.title(f"Mean Log2-Normalized Expression for {cell_type} Marker Genes")
         plt.ylabel("Mean Log2-Normalized Expression of Gene Set")
@@ -125,6 +127,7 @@ def main():
         exp_L.append(np.load(each))
     expression_matrix = np.concatenate(exp_L)
     # revert the log2 transform in the prediction
+    expression_matrix = np.clip(expression_matrix, 0, None)
     expression_matrix = 2**expression_matrix - 1
     # normalize to counts per million
     expression_matrix = expression_matrix / np.sum(expression_matrix, axis=1, keepdims=True) * 1e6
