@@ -80,7 +80,7 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
     cell_type_num = [cell_type_dict[cell] for cell in cell_type]
 
     # TMC
-    tmc_plot(original,cell_type,save_dir)
+    # tmc_plot(original,cell_type,save_dir)
 
     # pca
     pca = PCA(n_components=50)
