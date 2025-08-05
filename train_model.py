@@ -55,6 +55,7 @@ def read_tsv(file_path):
 def train(train_loader, val_loader, 
           num_genes, converter, feature_extractor,
           num_cell_types, 
+          end_to_end=False,
           up_marker_genes=None,
           gene_names=None,
           pcm_cell_to_idx=None,
@@ -124,6 +125,7 @@ def train(train_loader, val_loader,
     print("Preparing training model ...")
     lit_model = GeneExpPredVisiumHD(num_genes, 
                                     converter, feature_extractor,
+                                    end_to_end=end_to_end,
                                     num_cell_types=num_cell_types,
                                     up_marker_genes=enriched_gene_sets,
                                     domain_weight = domain_weight, 
@@ -161,6 +163,7 @@ def main():
     parser.add_argument('--livecell_dir', type=str, nargs="+", help='Directory containing the LIVECell patches')
     parser.add_argument('--mtx_dir', type=str, nargs="+", help='Directory containing the mtx files')
     parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
+    parser.add_argument('--end_to_end', action='store_true', help='If set, train the model end to end including SPAGHETTI')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size for training')
     parser.add_argument('--domain_weight', type=float, default=5.0, help='Domain weight for training')
@@ -200,6 +203,7 @@ def main():
     train(train_loader, val_loader, 
           num_genes=dataset.datasets[0].num_genes,
           num_cell_types=dataset.datasets[0].num_pcm_classes,
+          end_to_end=args.end_to_end,
           up_marker_genes=args.up_marker_genes,
           gene_names=args.gene_names,
           pcm_cell_to_idx=dataset.datasets[0].livecell_class_to_idx,

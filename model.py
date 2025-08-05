@@ -8,6 +8,7 @@ import random
 class GeneExpPredVisiumHD(pl.LightningModule):
     def __init__(self, num_genes, 
                  converter, feature_extractor,
+                 end_to_end=False,
                  num_cell_types=0,
                  up_marker_genes=None,
                  domain_weight = 5.0, 
@@ -32,6 +33,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.feature_extractor = feature_extractor
         self.converter = converter
         # hyperparameters
+        self.end_to_end = end_to_end
         self.lr = lr
         self.domain_weight = domain_weight
         self.coral_loss_weight = second_order_weight
@@ -46,6 +48,19 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             self.cell_type_criterion = nn.CrossEntropyLoss().to(self.device)
 
         self.save_hyperparameters(ignore=["converter", "feature_extractor"])
+    
+    def _setup(self, stage: str):
+        """
+        Setup method to freeze the feature extractor and converter.
+        If end_to_end is True, it will not freeze the converter.
+        """
+        # Freeze feature extractor
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
+        if not self.end_to_end:
+            # Freeze converter if not end to end
+            for param in self.converter.parameters():
+                param.requires_grad = False
     
     @staticmethod
     def coral_loss(source, target):
@@ -71,30 +86,33 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return loss / (4 * d * d)
 
     def forward(self, x, if_convert=False):
-        # if_convert is used to determine whether to use the converter or not
-        if if_convert:
-            x = self.converter(self.device, x)
-        x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1).detach()
-        x = self.translator(x)
-        x = self.predictor(x)
-        return x
+        with torch.no_grad():
+            # if_convert is used to determine whether to use the converter or not
+            if if_convert:
+                x = self.converter(self.device, x)
+            x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1)#.detach()
+            x = self.translator(x)
+            x = self.predictor(x)
+            return x
     
     def compute_feature(self, x, if_convert=False, if_translate=True):
-        if if_convert:
-            x = self.converter(self.device, x)
-        x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1).detach()
-        if if_translate:
-            x = self.translator(x)
-        return x
+        with torch.no_grad():
+            if if_convert:
+                x = self.converter(self.device, x)
+            x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1)#.detach()
+            if if_translate:
+                x = self.translator(x)
+            return x
     
     def compute_gate(self, x, if_convert=False, if_translate=True):
-        if if_convert:
-            x = self.converter(self.device, x)
-        x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1).detach()
-        if if_translate:
-            x = self.translator(x)
-        x = self.predictor(x, return_gate=True)
-        return x
+        with torch.no_grad():
+            if if_convert:
+                x = self.converter(self.device, x)
+            x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1)#.detach()
+            if if_translate:
+                x = self.translator(x)
+            x = self.predictor(x, return_gate=True)
+            return x
     
     def _marker_margin_loss(self, pred_expr, cell_types, marker_dict, margin=1.0,
                             across_cell=False):
@@ -151,8 +169,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.domain_discriminator.train()
         self.predictor.train()
         # obtain the features
-        he_features = self.feature_extractor(self.device, he_image)[:, 0, :].view(he_image.shape[0], -1).detach()
-        pcm_features = self.feature_extractor(self.device, self.converter(self.device, pcm_image))[:, 0, :].view(pcm_image.shape[0], -1).detach()
+        he_features = self.feature_extractor(self.device, he_image)[:, 0, :].view(he_image.shape[0], -1)#.detach()
+        pcm_features = self.feature_extractor(self.device, self.converter(self.device, pcm_image))[:, 0, :].view(pcm_image.shape[0], -1)#.detach()
         
         # Translator part
         he_translated = self.translator(he_features)
