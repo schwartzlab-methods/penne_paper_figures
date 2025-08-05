@@ -52,13 +52,12 @@ def resnet_features(model, device, x):
         x = torch.flatten(x, 1)
     return x
 
-def spaghetti_convertion(model, device, x):
+def spaghetti_convertion(model, device, x, end_to_end=False):
     '''
     Perform the image translation of PCM -> HE using the SPAGHETTI model
     '''
     model.to(device)
-    model.eval()
-    with torch.no_grad():
+    if end_to_end:
         normalization = v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
         x = normalization(x)
         x = x.to(device)
@@ -69,4 +68,18 @@ def spaghetti_convertion(model, device, x):
         max_val = out.max()
         out = (out-min_val)/(max(max_val-min_val, 1e-5))
         out = torch.clamp(out, min=0, max=1) # ensure no overflow
+    else:
+        model.eval()
+        with torch.no_grad():
+            normalization = v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+            x = normalization(x)
+            x = x.to(device)
+            transformed = model(x)
+            # normalize to range [0,1]
+            out = torch.clamp(transformed, min=-1, max=1)
+            min_val = out.min()
+            max_val = out.max()
+            out = (out-min_val)/(max(max_val-min_val, 1e-5))
+            out = torch.clamp(out, min=0, max=1) # ensure no overflow
+        
     return out

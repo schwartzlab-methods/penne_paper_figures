@@ -211,7 +211,7 @@ def main():
           cell_type_loss_weight=args.cell_type_loss_weight,
           marker_gene_loss_weight=args.marker_gene_loss_weight,
           marker_across_cell=args.marker_across_cell,
-          converter=lambda device, x: spaghetti_convertion(spaghetti, device, x),
+          converter=lambda device, x: spaghetti_convertion(spaghetti, device, x, end_to_end=args.end_to_end),
           feature_extractor=lambda device, x: owkin_features(feature_extractor, device, image_processor, x), 
           domain_weight=args.domain_weight, coral_loss_weight=args.coral_loss_weight,
           lr=args.lr, save_dir=args.output_dir, epochs=args.epochs, name=args.name)
