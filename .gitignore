@@ -1,5 +1,8 @@
 scripts/
 
+#ignoring personal test files
+test.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
