@@ -29,34 +29,41 @@ def preprocess_stimage_1k4m(base_dir: str):
             os.remove(os.path.join(base_dir, "Visium", "coord", coor))
     print("Pre-processing complete. Only human samples are retained.")
 
-def find_common_genes(csv_files: str):
+def find_common_genes(csv_files: str, min_genes=2000):
     """
     Find common genes in the given csv files.
-    !TODO: Filter by the number of genes in the csv? some files may have very few genes
     """
     save_path = os.path.join(os.path.dirname(os.path.dirname(csv_files[0])))
     print("Common genes will be saved to ", save_path)
     common_genes = None
+    used_csvs = []
     for file in tqdm(csv_files):
         df = pd.read_csv(file)
         df.columns = [x.split("hg38_")[-1] for x in df.columns] #remove the genome reference
         genes = set(df.columns)
+        if len(genes) < min_genes:
+            print("Sample has too few genes. Skipping")
+            continue
+        used_csvs.append(file)
         if common_genes is None:
             common_genes = genes
         else:
             common_genes.intersection_update(genes)
     # save common genes to a file
     common_genes_L = sorted(list(common_genes))
-    with open(os.path.join(save_path, "common_genes.txt"), "w") as f:
+    with open(os.path.join(save_path, f"common_genes_{min_genes}.txt"), "w") as f:
         for gene in sorted(common_genes_L):
             f.write(f"{gene}\n")
-    return common_genes_L
+    with open(os.path.join(save_path, f"samples_with_enough_genes_{min_genes}.txt"), "w") as f:
+        for sample in sorted(used_csvs):
+            f.write(f"{os.path.basename(file_path).replace("_count.csv", "")}\n")
+    return common_genes_L, used_csvs
 
 def process_sample(args):
     """
     Process a single sample to create patches and save them.
     """
-    sample, base_dir, common_genes = args
+    sample, base_dir, common_genes, name = args
     try:
         image = Image.open(os.path.join(base_dir, "Visium", "image", f"{sample}.png")).convert('RGB')
         exp_df = pd.read_csv(os.path.join(base_dir, "Visium", "gene_exp", f"{sample}_count.csv"))
@@ -79,24 +86,25 @@ def process_sample(args):
                 print(f"Skipping patch {patch_name} for sample {sample} due to out of bounds coordinates.")
                 continue
             patch_image = image.crop((x, y, x + 2 * radius, y + 2 * radius))
-            if patch_image.size[0] * patch_image.size[1] < 128:
+            if patch_image.size[0] * patch_image.size[1] < 10000:
                 print("Image too small, skipping ...")
             else:
                 # save image and numpy
-                patch_image.save(os.path.join(base_dir, "Visium_patch_images_filtered_processed", f"{patch_name}.png"))
-                np.save(os.path.join(base_dir, "Visium_patches_exp_filtered_processed", f"{patch_name}.npy"), patch)
+                patch_image.save(os.path.join(base_dir, f"Visium_patch_images_filtered_processed_{name}", f"{patch_name}.png"))
+                np.save(os.path.join(base_dir, f"Visium_patch_exps_filtered_processed_{name}", f"{patch_name}.npy"), patch)
     except Exception as e:
         print(f"Error processing sample {sample}: {e}")
 
-def create_patch_matrix(base_dir: str, common_genes: list):
+def create_patch_matrix(base_dir: str, common_genes: list, sample_names: list, dir_name: str):
     """
     Create a matrix with only the common genes using multiprocessing.
     """
-    sample_names = [
-        f.split(".")[0]
-        for f in os.listdir(os.path.join(base_dir, "Visium", "image"))
-        if f.endswith('.png')
-    ]
+    if not sample_names:
+        sample_names = [
+            f.split(".")[0]
+            for f in os.listdir(os.path.join(base_dir, "Visium", "image"))
+            if f.endswith('.png')
+        ]
     args = [(sample, base_dir, common_genes) for sample in sample_names]
 
     num_workers = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count()))
@@ -110,26 +118,30 @@ def main():
     parser = argparse.ArgumentParser(description="Generate patch expression numpy file for STimage-1k4m dataset")
     parser.add_argument("--base_dir", type=str, required=True, help="Base directory of the STimage-1k4m dataset")
     parser.add_argument("--common_genes_txt", type=str, default=None, help="Path to the .txt file with all common genes")
+    parser.add_argument("--used_samples", type=str, default=None, help="Path to the .txt file with all samples to be proccessed")
+    parser.add_argument("--name", type=str, default=None, help="Name of the savind directories")
     args = parser.parse_args()
 
     Image.MAX_IMAGE_PIXELS = 51150844200000
 
     base_dir = args.base_dir
-    os.makedirs(os.path.join(base_dir, "Visium_patch_images_filtered_processed"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "Visium_patches_exp_filtered_processed"), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, f"Visium_patch_images_filtered_processed_{args.name}"), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, f"Visium_patch_exps_filtered_processed_{args.name}"), exist_ok=True)
     preprocess_stimage_1k4m(base_dir)
 
-    if args.common_genes_txt:
+    if args.common_genes_txt and args.used_samples:
         with open(args.common_genes_txt, 'r') as f:
             common_genes = [line.strip() for line in f.readlines()]
+        with open(args.used_samples, 'r') as f:
+            used_samples = [line.strip() for line in f.readlines()]
     else:
         exp_files = [os.path.join(base_dir, "Visium", "gene_exp", f) for f in os.listdir(os.path.join(base_dir, "Visium", "gene_exp")) if f.endswith('.csv')]
-        common_genes = find_common_genes(exp_files)
+        common_genes, used_samples = find_common_genes(exp_files)
     print(f"Common genes found: {len(common_genes)}")
 
 
     print("Start processing patches")    
-    create_patch_matrix(base_dir, common_genes)
+    create_patch_matrix(base_dir, common_genes, used_samples, args.name)
 
 if __name__ == "__main__":
     main()
