@@ -201,10 +201,10 @@ class SpaghettiGenerator(nn.Module):
             x = self.out(x)
             # normalize to range [0,1]
             x = torch.clamp(x, min=-1, max=1)
-            min_val = out.min()
-            max_val = out.max()
-            out = (out-min_val)/(max(max_val-min_val, 1e-5))
-            out = torch.clamp(out, min=0, max=1) # ensure no overflow
+            min_val = x.min()
+            max_val = x.max()
+            x = (x-min_val)/(max(max_val-min_val, 1e-5))
+            x = torch.clamp(x, min=0, max=1) # ensure no overflow
         else:
             x = self.conv(x)
             x = self.down(x)
