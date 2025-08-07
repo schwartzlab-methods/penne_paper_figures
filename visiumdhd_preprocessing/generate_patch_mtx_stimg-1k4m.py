@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import argparse
-from multiprocessing import Pool
+from multiprocessing import get_context
 
 def preprocess_stimage_1k4m(base_dir: str):
     """
@@ -29,7 +29,7 @@ def preprocess_stimage_1k4m(base_dir: str):
             os.remove(os.path.join(base_dir, "Visium", "coord", coor))
     print("Pre-processing complete. Only human samples are retained.")
 
-def find_common_genes(csv_files: str, min_genes=2000):
+def find_common_genes(csv_files: str, min_genes=10000):
     """
     Find common genes in the given csv files.
     """
@@ -37,26 +37,33 @@ def find_common_genes(csv_files: str, min_genes=2000):
     print("Common genes will be saved to ", save_path)
     common_genes = None
     used_csvs = []
+    current_gene_lists = []
     for file in tqdm(csv_files):
-        df = pd.read_csv(file)
-        df.columns = [x.split("hg38_")[-1] for x in df.columns] #remove the genome reference
-        genes = set(df.columns)
+        with open(file, "r") as f:
+            first_line = f.readline()
+        genes = first_line.split(",")
+        genes[0] = "Unnamed: 0"
+        genes[-1] = genes[-1].split("\n")[0]
+        genes = [x.split("hg38_")[-1] for x in genes]
+        genes = set(genes)
         if len(genes) < min_genes:
             print("Sample has too few genes. Skipping")
             continue
         used_csvs.append(file)
-        if common_genes is None:
-            common_genes = genes
-        else:
-            common_genes.intersection_update(genes)
+        current_gene_lists.append(genes)
     # save common genes to a file
+    current_gene_lists.sort(key=len)
+    common_genes = set.intersection(*current_gene_lists)
     common_genes_L = sorted(list(common_genes))
-    with open(os.path.join(save_path, f"common_genes_{min_genes}.txt"), "w") as f:
+    print(f"Processing finished. Total {len(common_genes_L)} genes in {len(used_csvs)} samples will be processed")
+    used_csvs = sorted(used_csvs)
+    used_csvs = [os.path.basename(sample).replace('_count.csv', '') for sample in used_csvs]
+    with open(os.path.join(save_path, "sample_info", f"common_genes_{min_genes}.txt"), "w") as f:
         for gene in sorted(common_genes_L):
             f.write(f"{gene}\n")
-    with open(os.path.join(save_path, f"samples_with_enough_genes_{min_genes}.txt"), "w") as f:
+    with open(os.path.join(save_path, "sample_info", f"samples_with_enough_genes_{min_genes}.txt"), "w") as f:
         for sample in sorted(used_csvs):
-            f.write(f"{os.path.basename(file_path).replace("_count.csv", "")}\n")
+            f.write(f"{sample}\n")
     return common_genes_L, used_csvs
 
 def process_sample(args):
@@ -105,11 +112,11 @@ def create_patch_matrix(base_dir: str, common_genes: list, sample_names: list, d
             for f in os.listdir(os.path.join(base_dir, "Visium", "image"))
             if f.endswith('.png')
         ]
-    args = [(sample, base_dir, common_genes) for sample in sample_names]
+    args = [(sample, base_dir, common_genes, dir_name) for sample in sample_names]
 
     num_workers = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count()))
     print(f"Starting with {num_workers} processes")
-    with Pool(processes=num_workers) as pool:
+    with get_context("spawn").Pool(processes=num_workers) as pool:
         list(tqdm(pool.imap_unordered(process_sample, args), total=len(sample_names), desc="Processing samples"))
 
     print("Patch matrix creation complete.")
@@ -122,7 +129,8 @@ def main():
     parser.add_argument("--name", type=str, default=None, help="Name of the savind directories")
     args = parser.parse_args()
 
-    Image.MAX_IMAGE_PIXELS = 51150844200000
+    # Image.MAX_IMAGE_PIXELS = 51150844200000
+    Image.MAX_IMAGE_PIXELS = None
 
     base_dir = args.base_dir
     os.makedirs(os.path.join(base_dir, f"Visium_patch_images_filtered_processed_{args.name}"), exist_ok=True)
@@ -134,11 +142,10 @@ def main():
             common_genes = [line.strip() for line in f.readlines()]
         with open(args.used_samples, 'r') as f:
             used_samples = [line.strip() for line in f.readlines()]
+        print(f"Common genes found: {len(common_genes)}")
     else:
         exp_files = [os.path.join(base_dir, "Visium", "gene_exp", f) for f in os.listdir(os.path.join(base_dir, "Visium", "gene_exp")) if f.endswith('.csv')]
         common_genes, used_samples = find_common_genes(exp_files)
-    print(f"Common genes found: {len(common_genes)}")
-
 
     print("Start processing patches")    
     create_patch_matrix(base_dir, common_genes, used_samples, args.name)
