@@ -70,7 +70,8 @@ def main():
             # select only the genes that are in the intersection of gt and gene_names
             common_genes = list(set(gt_data.index).intersection(set(gene_names)))
             # filter the gene names
-            gene_names = [gene if gene in common_genes else None for gene in gene_names]
+            # filter out this one gene because it got mapped twice for some reasons
+            gene_names = [gene if ((gene in common_genes) and (gene != "CYB561D2")) else None for gene in gene_names]
             order = [gene for gene in gene_names if gene in common_genes]
             gt_data = gt_data.loc[order, :]  # filter to only have the common genes
             # sort the ground truth data by gene names
@@ -81,14 +82,14 @@ def main():
             l2fc_gt = (gt_data[args.cell_types[1].lower()] - gt_data[args.cell_types[0].lower()]).to_numpy()
             print("GT processed, running DGE on data")
 
-    # revert the log2 transform in the prediction
-    counts = np.clip(counts, 0, None)
-    counts = 2**counts - 1
+    # # revert the log2 transform in the prediction
+    # counts = np.clip(counts, 0, None)
+    # counts = 2**counts - 1
 
-    # normalize to counts per million
-    counts = counts / np.sum(counts, axis=1, keepdims=True) * 1e6
-    # log2 transform
-    counts = np.log2(counts + 1)
+    # # normalize to counts per million
+    # counts = counts / np.sum(counts, axis=1, keepdims=True) * 1e6
+    # # log2 transform
+    # counts = np.log2(counts + 1)
     
     # get only the cell types of interest from counts
     cell_type_mask = np.isin(cell_types, args.cell_types)
