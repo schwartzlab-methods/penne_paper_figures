@@ -13,31 +13,17 @@ import seaborn as sns
 from scipy.cluster import hierarchy
 from torch.utils.data import random_split, DataLoader, ConcatDataset
 import pytorch_lightning as pl
-from modules import SpaghettiGenerator
 from model import GeneExpPredVisiumHD
 from dataset import VisiumHD_Livecell_Dataset
-from transformers import AutoImageProcessor, AutoModel
+from transformers import AutoModel
 import argparse
-from _feature_extractors import owkin_features, spaghetti_convertion
+from _feature_extractors import init_spaghetti, pre_processing_phikon
 import altair as alt
 ## plotting settings
 if True:  # In order to bypass isort when saving
     from altairThemes import altairThemes
 alt.themes.register("publishTheme", altairThemes.publishTheme)
 alt.themes.enable("publishTheme")
-
-def init_spaghetti(model_path: str) -> torch.nn.Module:
-    '''
-    Initialize the SPAGHETTI model for image translation
-    '''
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    generator = SpaghettiGenerator(3, 9)
-    generator.to(device)
-    ckpt = torch.load(model_path, map_location=device)["state_dict"]
-    # get only G_AB weights
-    ckpt = {k[5:]: v for k, v in ckpt.items() if ("G_AB" in k)}
-    generator.load_state_dict(ckpt)
-    return generator
 
 def plot_heatmap(save_dr, expression_gt, matched_spot_expression_pred, top_k=50,exp="heatmap.png"):
     #plot heatmap of top k genes ranked by mean
@@ -110,7 +96,7 @@ def main():
     parser.add_argument('--mtx_dir', type=str, nargs="+", help='Directory containing the mtx files')
     parser.add_argument('--model_dir', type=str, help='Directory containing the model checkpoints')
     parser.add_argument('--gene_names', type=str, help='Path to the gene names feature tsv file')
-    parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
+    parser.add_argument('--spaghetti_model', type=str, default=None, help='Path to the Spaghetti model. If none supplied, it will load from the state dict')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
@@ -125,11 +111,16 @@ def main():
     # create dataloaders
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
     # create feature extractor
-    feature_extractor = AutoModel.from_pretrained("owkin/phikon-v2")
-    image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
+    extractor = AutoModel.from_pretrained("owkin/phikon-v2").eval()
+    # image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
+    image_processor = pre_processing_phikon()
+    feature_extractor = (image_processor, extractor)
+    if args.spaghetti_model:
+        converter = init_spaghetti(args.spaghetti_model)
+    else:
+        converter = None
     model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_dir, num_genes = dataset.datasets[0].num_genes, 
-                                converter = lambda device, x: spaghetti_convertion(init_spaghetti(args.spaghetti_model), device, x), 
-                                feature_extractor = lambda device, x: owkin_features(feature_extractor, device, image_processor, x))
+                                converter = converter, feature_extractor = feature_extractor)
     model.freeze()
     # inference
     pred_L = []
@@ -147,6 +138,9 @@ def main():
         for batch in tqdm(val_loader, total=len(val_loader)):
             if (data_len < 100000) or (random.random() > 0.8):
                 he_image, mtx, pcm, image_path, _ = batch
+                he_image = he_image.to(model.device)
+                mtx = mtx.to(model.device)
+                pcm = pcm.to(model.device)
                 pred_exp = model.forward(he_image, if_convert=False)
                 # compute some features
                 features_he = model.compute_feature(he_image, if_convert=False, if_translate=True)

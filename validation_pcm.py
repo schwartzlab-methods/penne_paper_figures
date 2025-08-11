@@ -4,14 +4,13 @@ Perform inference of the model on PCM data
 
 import os
 import torch
-from train_model import init_spaghetti
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from model import GeneExpPredVisiumHD
 from dataset import LiveCellDataset, U373Dataset, TrizinaCaco2Dataset, ShaneMCF10ADataset
-from transformers import AutoImageProcessor, AutoModel
+from transformers import AutoModel
 import argparse
-from _feature_extractors import owkin_features, spaghetti_convertion
+from _feature_extractors import init_spaghetti, pre_processing_phikon
 import numpy as np
 from tqdm import tqdm
 
@@ -24,7 +23,7 @@ def main():
     parser.add_argument('--img_dir', type=str, nargs="+", help='Directory containing the LIVECell images (or other PCM images)')
     parser.add_argument('--model_dir', type=str, help='Directory containing the model checkpoints')
     parser.add_argument('--gene_names', type=str, help='Path to the gene names feature tsv or txt file')
-    parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
+    parser.add_argument('--spaghetti_model', type=str, default=None, help='Path to the Spaghetti model. If none, will try to load from model state dict')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument("--u373_dataset", action="store_true", help="use the u373 dataset instead of the livecell data")
     parser.add_argument("--caco2_dataset", action="store_true", help="use the cao2 dataset instead of the livecell data")
@@ -46,8 +45,14 @@ def main():
         dataset = LiveCellDataset(args.img_dir)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     # create feature extractor
-    feature_extractor = AutoModel.from_pretrained("owkin/phikon-v2")
-    image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
+    extractor = AutoModel.from_pretrained("owkin/phikon-v2").eval()
+    image_processor = pre_processing_phikon()
+    feature_extractor = (image_processor, extractor)
+    if args.spaghetti_model:
+        converter = init_spaghetti(args.spaghetti_model)
+    else:
+        converter = None
+    # image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
     # save the gene names
     if args.gene_names.endswith(".tsv.gz"):
         genes = np.loadtxt(args.gene_names, dtype=str, delimiter='\t')
@@ -63,8 +68,7 @@ def main():
     num_genes = gene_names.shape[0]
     # prep model
     model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_dir, num_genes = num_genes, 
-                                converter = lambda device, x: spaghetti_convertion(init_spaghetti(args.spaghetti_model), device, x), 
-                                feature_extractor = lambda device, x: owkin_features(feature_extractor, device, image_processor, x))
+                                converter = converter, feature_extractor = feature_extractor)
     model.freeze()
     # inference
     pred_L = []
