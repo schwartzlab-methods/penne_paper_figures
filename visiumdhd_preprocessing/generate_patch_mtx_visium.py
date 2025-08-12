@@ -66,7 +66,8 @@ def find_common_genes(cell_matrices: list, out: str) -> set:
             f.write(f"{gene}\n")
     return common_genes_L
 
-def main(dir: list, output: str, common_genes: str) -> None:
+def main(all_dir: str, output: str, common_genes: str) -> None:
+    dir = [os.path.join(all_dir, each) for each in os.listdir(all_dir)]
     mtx_save = os.path.join(output, "mtx")
     img_save = os.path.join(output, "tissue_img")
     if not os.path.exists(mtx_save):
@@ -76,7 +77,10 @@ def main(dir: list, output: str, common_genes: str) -> None:
     pos_mtx_list = []
     cell_mtx_list = []
     img_list = []
+    output_name = os.path.basename(output)
     for each in dir:
+        if each.endswith(output_name):
+            continue
         # find the image
         for file in os.listdir(each):
             if file.endswith(".tif") or file.endswith(".tiff") or file.endswith(".btf"):
@@ -115,7 +119,7 @@ def main(dir: list, output: str, common_genes: str) -> None:
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
-    argparser.add_argument('--dir', type=str, nargs="+", help='Directories containing the Visium image')
+    argparser.add_argument('--dir', type=str, help='Main directory containing the Visium image')
     argparser.add_argument('--common_genes', type=str, default=None, help='Path to the common genes file')
     argparser.add_argument('--output_dir', type=str, help='Output directory')
     args = argparser.parse_args()
