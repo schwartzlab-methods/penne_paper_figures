@@ -14,8 +14,10 @@ import tifffile
 from PIL import Image
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
+from scipy.sparse import csr_matrix
 
-def process(img_path: str, position_matrix: pd.DataFrame, cell_matrix: sc.AnnData, name: str, each_barcode: str, out: str) -> None:
+def process(args: list) -> None:
     '''Process a single image patch and its corresponding spatial and expression data.
 
     Args:
@@ -26,6 +28,7 @@ def process(img_path: str, position_matrix: pd.DataFrame, cell_matrix: sc.AnnDat
         each_barcode (str): The barcode corresponding to the current patch.
         out (dir): The output directory.
     '''
+    img_path, position_matrix, cell_matrix, name, each_barcode, out = args
     img = tifffile.imread(img_path)
     img_width = img.shape[1]
     img_height = img.shape[0]
@@ -36,6 +39,7 @@ def process(img_path: str, position_matrix: pd.DataFrame, cell_matrix: sc.AnnDat
     if x < 112 or y < 112 or x + 112 > img_width or y + 112 > img_height:
         return None  # Skip if the patch is out of bounds
     if mtx.shape[0] == 0:
+        print(mtx.shape)
         return None  # Skip if there are no barcode found
     if mtx.sum() == 0:
         return None  # Skip if there are no expression values found
@@ -110,21 +114,24 @@ def main(all_dir: str, output: str, common_genes: str) -> None:
     print("Common genes number: ", len(common_genes_list))
     # filter the cell matrices to only contain common genes
     for i in range(len(cell_mtx_list)):
-        cell_mtx_list[i] = cell_mtx_list[i][:,cell_mtx_list[i].var["gene_ids"].isin(common_genes_list)].copy()
+        cell_mtx_list[i].X = cell_mtx_list[i].X.todense() if isinstance(cell_mtx_list[i].X, csr_matrix) else cell_mtx_list[i].X
+        cell_mtx_list[i] = cell_mtx_list[i][:,cell_mtx_list[i].var_names.isin(common_genes_list)].copy()
         # sort according to the common genes
-        cell_mtx_list[i].var_names = cell_mtx_list[i].var_names.astype(str)
-        cell_mtx_list[i] = cell_mtx_list[i][:,cell_mtx_list[i].var.sort_values("gene_ids").index].copy()
+        cell_mtx_list[i] = cell_mtx_list[i][:,cell_mtx_list[i].var_names.sort_values()].copy()
+        print("Filtered cell matrix shape: ", cell_mtx_list[i].shape)
     total_tasks = sum(len(pos_mtx.barcode) for pos_mtx in pos_mtx_list)
     futures = []
-    print(f"start with {os.cpu_count()} workers")
-    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-        for i in range(len(img_list)):
-            img_path = img_list[i]
-            name = os.path.basename(os.path.dirname(img_list[i]))
-            for each_barcode in pos_mtx_list[i].barcode:
-                futures.append(executor.submit(process, img_path, pos_mtx_list[i], cell_mtx_list[i], name, each_barcode, output))
-        for _ in tqdm(concurrent.futures.as_completed(futures), total=total_tasks, desc="Processing patches"):
-            pass
+    print("Processing inputs...")
+    for i in tqdm(range(len(img_list))):
+        img_path = img_list[i]
+        name = os.path.basename(os.path.dirname(img_list[i]))
+        for each_barcode in pos_mtx_list[i].barcode:
+            futures.append((img_path, pos_mtx_list[i], cell_mtx_list[i], name, each_barcode, output))
+    print(f"Start with {os.cpu_count()} workers")
+    num_workers = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count()))
+    # with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+    with get_context("spawn").Pool(processes=num_workers) as pool:
+        list(tqdm(pool.imap_unordered(process, futures), total=total_tasks, desc="Processing samples"))
     print("All images have been processed")
 
 if __name__ == '__main__':
