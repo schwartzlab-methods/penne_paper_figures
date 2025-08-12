@@ -46,7 +46,27 @@ def process(img: np.array, position_matrix: pd.DataFrame,
     # process exp
     np.save(os.path.join(out, "mtx", f"{name}_{each_barcode}.npy"), mtx)
 
-def main(dir, output):
+def find_common_genes(cell_matrices: list, out: str) -> set:
+    '''Find common genes across all cell matrices.
+
+    Args:
+        cell_matrices (list): A list of AnnData objects containing cell matrices.
+        out (str): The output directory.
+
+    Returns:
+        set: A set of common gene names.
+    '''
+    genes_list = []
+    for cell_matrix in cell_matrices:
+        genes_list.extend(cell_matrix.var_names)
+    common_genes = set.intersection(*genes_list)
+    common_genes_L = sorted(list(common_genes))
+    with open(os.path.join(out, "common_genes.txt"), "w") as f:
+        for gene in sorted(common_genes_L):
+            f.write(f"{gene}\n")
+    return common_genes_L
+
+def main(dir: list, output: str, common_genes: str) -> None:
     mtx_save = os.path.join(output, "mtx")
     img_save = os.path.join(output, "tissue_img")
     if not os.path.exists(mtx_save):
@@ -70,6 +90,15 @@ def main(dir, output):
         sc.pp.log1p(cell_matrix)
         pos_mtx_list.append(position_matrix)
         cell_mtx_list.append(cell_matrix)
+    if common_genes:
+        with open(common_genes, "r") as f:
+            common_genes_list = [line.strip() for line in f.readlines()]
+    else:
+        common_genes_list = find_common_genes(cell_mtx_list, output)
+    # filter the cell matrices to only contain common genes
+    for i in range(len(cell_mtx_list)):
+        cell_mtx_list[i] = cell_mtx_list[i][cell_mtx_list[i].var_names.isin(common_genes_list)]
+        cell_mtx_list[i].var_names = common_genes_list
     # process by saving the cropped image and mtx according to the coordinates
     print("Files loaded and matrix normalized. Start processing")
     total_tasks = sum(len(pos_mtx.barcode) for pos_mtx in pos_mtx_list)
@@ -87,6 +116,7 @@ def main(dir, output):
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--dir', type=str, nargs="+", help='Directories containing the Visium image')
+    argparser.add_argument('--common_genes', type=str, default=None, help='Path to the common genes file')
     argparser.add_argument('--output_dir', type=str, help='Output directory')
     args = argparser.parse_args()
-    main(args.img, args.output_dir)
+    main(args.dir, args.output_dir, args.common_genes)
