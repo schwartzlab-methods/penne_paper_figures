@@ -28,25 +28,28 @@ def process(img: np.array, position_matrix: pd.DataFrame,
         each_barcode (str): The barcode corresponding to the current patch.
         out (dir): The output directory.
     '''
-    img_width = img.shape[1]
-    img_height = img.shape[0]
-    x = position_matrix.loc[position_matrix.barcode == each_barcode, 'pxl_col_in_fullres'].values[0]
-    y = position_matrix.loc[position_matrix.barcode == each_barcode, 'pxl_row_in_fullres'].values[0]
-    mtx = cell_matrix[cell_matrix.obs_names == each_barcode].X
-    # check if save is needed
-    if x < 112 or y < 112 or x + 112 > img_width or y + 112 > img_height:
-        return None  # Skip if the patch is out of bounds
-    if mtx.shape[0] == 0:
-        return None  # Skip if there are no barcode found
-    if mtx.sum() == 0:
-        return None  # Skip if there are no expression values found
-    # process image
-    cropped_image = img[y - 112:y + 112, x - 112:x + 112]
-    Image.fromarray(cropped_image).save(os.path.join(out, "tissue_img", f"{name}_{each_barcode}.png"))
-    # process exp
-    np.save(os.path.join(out, "mtx", f"{name}_{each_barcode}.npy"), mtx)
+    try:
+        img_width = img.shape[1]
+        img_height = img.shape[0]
+        x = position_matrix.loc[position_matrix.barcode == each_barcode, 'pxl_col_in_fullres'].values[0]
+        y = position_matrix.loc[position_matrix.barcode == each_barcode, 'pxl_row_in_fullres'].values[0]
+        mtx = cell_matrix[cell_matrix.obs_names == each_barcode].X
+        # check if save is needed
+        if x < 112 or y < 112 or x + 112 > img_width or y + 112 > img_height:
+            return None  # Skip if the patch is out of bounds
+        if mtx.shape[0] == 0:
+            return None  # Skip if there are no barcode found
+        if mtx.sum() == 0:
+            return None  # Skip if there are no expression values found
+        # process image
+        cropped_image = img[y - 112:y + 112, x - 112:x + 112]
+        Image.fromarray(cropped_image).save(os.path.join(out, "tissue_img", f"{name}_{each_barcode}.png"))
+        # process exp
+        np.save(os.path.join(out, "mtx", f"{name}_{each_barcode}.npy"), mtx)
+    except Exception as e:
+        print(e)
 
-def find_common_genes(cell_matrices: list, out: str) -> set:
+def find_common_genes(cell_matrices: list, out: str) -> list:
     '''Find common genes across all cell matrices.
 
     Args:
@@ -54,11 +57,11 @@ def find_common_genes(cell_matrices: list, out: str) -> set:
         out (str): The output directory.
 
     Returns:
-        set: A set of common gene names.
+        list: A list of common gene names.
     '''
     genes_list = []
     for cell_matrix in cell_matrices:
-        genes_list.extend(cell_matrix.var_names)
+        genes_list.append(set(cell_matrix.var_names))
     common_genes = set.intersection(*genes_list)
     common_genes_L = sorted(list(common_genes))
     with open(os.path.join(out, "common_genes.txt"), "w") as f:
@@ -67,7 +70,7 @@ def find_common_genes(cell_matrices: list, out: str) -> set:
     return common_genes_L
 
 def main(all_dir: str, output: str, common_genes: str) -> None:
-    dir = [os.path.join(all_dir, each) for each in os.listdir(all_dir)]
+    sample_dir = [os.path.join(all_dir, each) for each in os.listdir(all_dir)]
     mtx_save = os.path.join(output, "mtx")
     img_save = os.path.join(output, "tissue_img")
     if not os.path.exists(mtx_save):
@@ -77,16 +80,20 @@ def main(all_dir: str, output: str, common_genes: str) -> None:
     pos_mtx_list = []
     cell_mtx_list = []
     img_list = []
-    output_name = os.path.basename(output)
-    for each in dir:
+    output_name = os.path.dirname(output)
+    for each in tqdm(sample_dir):
         if each.endswith(output_name):
             continue
         # find the image
         for file in os.listdir(each):
             if file.endswith(".tif") or file.endswith(".tiff") or file.endswith(".btf"):
                 img_list.append(os.path.join(each, file))
-        position_matrix = pd.read_csv(os.path.join(each, "spatial",
+        try:
+            position_matrix = pd.read_csv(os.path.join(each, "spatial",
                                                    "tissue_positions_list.csv"), sep=",", header=None)
+        except FileNotFoundError:
+            position_matrix = pd.read_csv(os.path.join(each, "spatial",
+                                                   "tissue_positions.csv"), sep=",", header=None)
         position_matrix.columns = ['barcode', 'in_tissue', 'array_row', 'array_col', 'pxl_row_in_fullres', 'pxl_col_in_fullres']
         cell_matrix = sc.read_10x_mtx(os.path.join(each, "filtered_feature_bc_matrix"))
         # normalization
@@ -99,16 +106,19 @@ def main(all_dir: str, output: str, common_genes: str) -> None:
             common_genes_list = [line.strip() for line in f.readlines()]
     else:
         common_genes_list = find_common_genes(cell_mtx_list, output)
+    print("Common genes number: ", len(common_genes_list))
     # filter the cell matrices to only contain common genes
     for i in range(len(cell_mtx_list)):
-        cell_mtx_list[i] = cell_mtx_list[i][cell_mtx_list[i].var_names.isin(common_genes_list)]
-        cell_mtx_list[i].var_names = common_genes_list
+        cell_mtx_list[i] = cell_mtx_list[i][:,cell_mtx_list[i].var["gene_ids"].isin(common_genes_list)].copy()
+        # sort according to the common genes
+        cell_mtx_list[i].var_names = cell_mtx_list[i].var_names.astype(str)
+        cell_mtx_list[i] = cell_mtx_list[i][:,cell_mtx_list[i].var.sort_values("gene_ids").index].copy()
     # process by saving the cropped image and mtx according to the coordinates
     print("Files loaded and matrix normalized. Start processing")
     total_tasks = sum(len(pos_mtx.barcode) for pos_mtx in pos_mtx_list)
     with concurrent.futures.ProcessPoolExecutor(max_workers=10) as executor:
         futures = []
-        for i in range(len(img_list)):
+        for i in tqdm(range(len(img_list))):
             img = tifffile.imread(img_list[i])
             name = os.path.basename(os.path.dirname(img_list[i]))
             for each_barcode in pos_mtx_list[i].barcode:
