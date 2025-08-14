@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms.v2 as v2
 import modules
 import pytorch_lightning as pl
 import random
@@ -20,6 +19,36 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  lr=1e-3,
                  do_gmlp=True,
                  across_cell=False):
+        '''Gene expression prediction model for Visium HD data.
+
+        Args:
+            num_genes (int): 
+                Number of genes to predict.
+            converter (nn.Module): 
+                Module to convert image features to gene expression.
+            feature_extractor (list(Callable, Callable)): 
+                Preprocessor and Model to extract features from images.
+            end_to_end (bool, optional): 
+                Whether to train the model end-to-end. Defaults to False.
+            num_cell_types (int, optional): 
+                Number of cell types in the dataset. Defaults to 0.
+            up_marker_genes (dict[int, list[str]], optional): 
+                Mapping from cell type indices to lists of upregulated marker genes. Defaults to None.
+            domain_weight (float, optional): 
+                Weight for domain adaptation loss. Defaults to 5.0.
+            second_order_weight (float, optional): 
+                Weight for second-order loss. Defaults to 0.1.
+            cell_type_weight (float, optional): 
+                Weight for cell type classification loss. Defaults to 0.0.
+            marker_gene_weight (float, optional): 
+                Weight for marker gene prediction loss. Defaults to 0.0.
+            lr (float, optional): 
+                Learning rate for the optimizer. Defaults to 1e-3.
+            do_gmlp (bool, optional): 
+                Whether to use Gated MLP for prediction. Defaults to True.
+            across_cell (bool, optional): 
+                Whether to use across-cell information. Defaults to False.
+        '''
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
         self.translator = modules.Translator().to(self.device)
@@ -61,14 +90,19 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.save_hyperparameters(ignore=["converter", "feature_extractor"])
     
     @staticmethod
-    def coral_loss(source, target):
+    def coral_loss(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
         CORAL = covariance alignment
         Compute CORAL loss between source and target feature maps.
         Use to align the second-order statistics of the source and target distributions.
+        Args:
+            source (torch.Tensor): Source feature map.
+            target (torch.Tensor): Target feature map.
+        Returns:
+            torch.Tensor: CORAL loss.
         """
         d = source.size(1)  # feature dimension
-        ns = source.size(0)
+        ns = source.size(0)  # batch size
         nt = target.size(0)
 
         # Source covariance
@@ -81,13 +115,25 @@ class GeneExpPredVisiumHD(pl.LightningModule):
 
         # Frobenius norm
         loss = torch.mean((xc - xct) ** 2)
-        return loss / (4 * d * d)
+        return loss / (4 * d * d)  # normalize by feature dimension
 
-    def forward(self, x, if_convert=False):
+    def forward(self, x: torch.Tensor, if_convert: bool=False) -> torch.Tensor:
+        '''Forward pass for the model.
+
+        Args:
+            x (torch.Tensor): 
+                Input tensor of the image in the shape of (batch_size, num_channels, height, width).
+            if_convert (bool, optional): 
+                Whether to use the converter to convert into H&E like images. Defaults to False.
+
+        Returns:
+            torch.Tensor: 
+                Output tensor of the gene expression inference in the shape of (batch_size, num_genes).
+        '''
         # if_convert is used to determine whether to use the converter or not
         if if_convert:
             x = self.converter(x)
-        x_converted = self.image_processor(x)#, return_tensors="pt", do_rescale=False)       
+        x_converted = self.image_processor(x)      
         x = self.feature_extractor(x_converted).last_hidden_state[:, 0, :].view(x.shape[0], -1)
         x = self.translator(x)
         x = self.predictor(x)
@@ -96,7 +142,23 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         x = torch.log2(x + 1)
         return x
     
-    def compute_feature(self, x, if_convert=False, if_translate=True):
+    def compute_feature(self, x: torch.Tensor, if_convert: bool=False, 
+                        if_translate: bool=True) -> torch.Tensor:
+        '''Compute feature representation for the input tensor.
+
+        Args:
+            x (torch.Tensor): 
+                Input tensor of the image in the shape of (batch_size, num_channels, height, width).
+            if_convert (bool, optional): 
+                Whether to use the converter to convert into H&E like images. Defaults to False.
+            if_translate (bool, optional): 
+                Whether to use the translator for better domain alignment. Defaults to True.
+
+        Returns:
+            torch.Tensor: 
+                Feature representation of the input tensor in the shape of (batch_size, num_features).
+        '''
+
         with torch.no_grad():
             if if_convert:
                 x = self.converter(x)
@@ -105,8 +167,23 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             if if_translate:
                 x = self.translator(x)
             return x
-    
-    def compute_gate(self, x, if_convert=False, if_translate=True):
+
+    def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
+                     if_translate: bool=True) -> torch.Tensor:
+        '''Compute gating vector for the input tensor.
+
+        Args:
+            x (torch.Tensor): 
+                Input tensor of the image in the shape of (batch_size, num_channels, height, width).
+            if_convert (bool, optional): 
+                Whether to use the converter to convert into H&E like images. Defaults to False.
+            if_translate (bool, optional): 
+                Whether to use the translator for better domain alignment. Defaults to True.
+
+        Returns:
+            torch.Tensor: 
+                Gating vector of the input tensor in the shape of (batch_size, num_features).
+        '''
         with torch.no_grad():
             if if_convert:
                 x = self.converter(x)
@@ -116,9 +193,27 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 x = self.translator(x)
             x = self.predictor(x, return_gate=True)
             return x
-    
-    def _marker_margin_loss(self, pred_expr, cell_types, marker_dict, margin=1.0,
-                            across_cell=False):
+
+    def _marker_margin_loss(self, pred_expr: torch.Tensor, cell_types: torch.Tensor,
+                            marker_dict: dict, margin: float=1.0,
+                            across_cell: bool=False) -> torch.Tensor:
+        '''Compute the marker margin loss.
+
+        Args:
+            pred_expr (torch.Tensor): 
+                Predicted gene expression values in the shape of (batch_size, num_genes).
+            cell_types (torch.Tensor): 
+                Cell type labels in the shape of (batch_size,).
+            marker_dict (dict[Int, List[Int]]): 
+                Dictionary mapping cell type indices to marker gene indices in exp matrix.
+            margin (float, optional): 
+                Margin for the loss. Defaults to 1.0.
+            across_cell (bool, optional): 
+                Whether to compute the loss across cell types instead of within cell types. Defaults to False.
+
+        Returns:
+            torch.Tensor: Computed loss value of the marker margin loss.
+        '''
         loss = 0.0
         if across_cell:
             # Compare the marker gene exp across all cells. 
@@ -166,12 +261,26 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 )
             return loss / pred_expr.size(0)
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: tuple, batch_idx: int):
+        '''Perform a single training step.
+
+        Args:
+            batch (tuple): A tuple containing the input data for the batch. This contains the following elements:
+                - he_image (torch.Tensor): The HE image tensor in the shape of (batch_size, channels, height, width).
+                - mtx (torch.Tensor): The gene expression matrix.
+                - pcm_image (torch.Tensor): The PCM image tensor.
+                - _ (str): HE image path, not used during training
+                - cell_type (torch.Tensor): The cell type labels in the shape of (batch_size,).
+            batch_idx (int): The index of the batch.
+
+        Returns:
+            loss (torch.Tensor): The computed loss for the batch.
+        '''
         he_image, mtx, pcm_image, _, cell_type = batch
         # obtain the features
         pcm_converted = self.converter(pcm_image)
-        pcm_converted = self.image_processor(pcm_converted)#, return_tensors="pt", do_rescale=False)
-        he_converted = self.image_processor(he_image)#, return_tensors="pt", do_rescale=False)
+        pcm_converted = self.image_processor(pcm_converted)
+        he_converted = self.image_processor(he_image)
         pcm_features = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).requires_grad_()#.detach()
         he_features = self.feature_extractor(he_converted).last_hidden_state[:, 0, :].view(he_image.shape[0], -1).requires_grad_()#.detach()
         # Translator part
@@ -179,8 +288,6 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         pcm_translated = self.translator(pcm_features)
     
         # DANN part
-        # pred_discriminator_fake = self.domain_discriminator(he_translated, pcm_translated)
-        # pred_discriminator_real = self.domain_discriminator(he_translated, he_translated)
         pred_discriminator_fake = self.domain_discriminator(he_translated)
         pred_discriminator_real = self.domain_discriminator(pcm_translated)
         fake_labels = torch.zeros_like(pred_discriminator_fake)
@@ -226,12 +333,26 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return total_loss
  
     def validation_step(self, batch, batch_idx):
+        '''Perform a single validation step.
+
+        Args:
+            batch (tuple): A tuple containing the input data for the batch. This contains the following elements:
+                - he_image (torch.Tensor): The HE image tensor in the shape of (batch_size, channels, height, width).
+                - mtx (torch.Tensor): The gene expression matrix.
+                - pcm_image (torch.Tensor): The PCM image tensor.
+                - _ (str): HE image path, not used during validation
+                - cell_type (torch.Tensor): The cell type labels in the shape of (batch_size,).
+            batch_idx (int): The index of the batch.
+
+        Returns:
+            loss (torch.Tensor): The computed loss for the batch.
+        '''
         he_image, mtx, pcm_image, _, cell_type = batch
         with torch.no_grad():
             # obtain the features
             pcm_converted = self.converter(pcm_image)
-            pcm_converted = self.image_processor(pcm_converted)#, return_tensors="pt", do_rescale=False)
-            he_converted = self.image_processor(he_image)#, return_tensors="pt", do_rescale=False)
+            pcm_converted = self.image_processor(pcm_converted)
+            he_converted = self.image_processor(he_image)
             pcm_features = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).detach()
             he_features = self.feature_extractor(he_converted).last_hidden_state[:, 0, :].view(he_image.shape[0], -1).detach()
             # Translator part

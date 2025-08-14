@@ -2,17 +2,16 @@ import os
 import torch
 from torch.utils.data import random_split, DataLoader, ConcatDataset
 import pytorch_lightning as pl
-import torchvision.transforms.v2 as v2
-import torch.nn.functional as F
 from pytorch_lightning.loggers import CSVLogger
 from model import GeneExpPredVisiumHD
 from dataset import VisiumHD_Livecell_Dataset
-from transformers import AutoImageProcessor, AutoModel
+from transformers import AutoModel
 from _feature_extractors import init_spaghetti, pre_processing_phikon
 import argparse
 from tqdm import tqdm
 import pandas as pd
 
+#* Helpers
 def find_checkpoint(dir: str):
     '''
     Find the latest checkpoint in the directory
@@ -32,14 +31,23 @@ def find_checkpoint(dir: str):
     else:
         return max(files, key=os.path.getctime)
         
-def read_tsv(file_path):
+def read_tsv(file_path: str):
+    '''Read a tab-separated values (TSV) gmt file into a pandas DataFrame.
+
+    Args:
+        file_path (str): The path to the GMT TSV file.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the data from the TSV file.
+    '''
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = [line.strip().split('\t') for line in f]
-    df = pd.DataFrame(lines).T #number of genes x number of cells
-    df.columns = [cell.lower() for cell in df.iloc[0].tolist()]  # set the first row as header
-    df = df[2:]  # remove the first row
+    df = pd.DataFrame(lines).T #number of genes x number of cell types
+    df.columns = [cell.lower() for cell in df.iloc[0].tolist()]  # set the first row (cell type names) as header
+    df = df[2:]  # remove the first row as it contains information about the gene sets
     return df
 
+#* Main training function
 def train(train_loader, val_loader, 
           num_genes, converter, feature_extractor,
           num_cell_types, 
@@ -78,14 +86,13 @@ def train(train_loader, val_loader,
         celltype_of_interest = [x.lower() for x in celltypes]
         pcm_cell_to_idx_lower = {k.lower(): v for k, v in pcm_cell_to_idx.items()}
         signature = read_tsv(up_marker_genes)
-        # convert the signature from gene names to gene symbols
+        # convert the signature from gene IDs to gene symbols
         if gene_names.endswith(".tsv.gz"):
             template = pd.read_csv(gene_names, sep='\t', header=None)
             feature_names = template.iloc[:, 0].tolist()
-            # print(feature_names)
             name_to_symbol = {row[1]: row[0] for _, row in template.iterrows()}  # map from gene name to gene symbol
             # convert the signature to gene symbols by mapping the dataframe
-            signature = signature.map(lambda x: name_to_symbol.get(x, x))  # map gene names to symbols
+            signature = signature.map(lambda x: name_to_symbol.get(x, x))  # map gene IDs to symbols
         else:
             with open(gene_names, 'r') as f:
                 feature_names = [line.strip() for line in f.readlines() if "Unnamed" not in line]
@@ -140,6 +147,7 @@ def train(train_loader, val_loader,
     trainer.fit(lit_model, train_loader, val_loader, None)
     print("Training ended.")
 
+#* Main
 def main():
     # seeds for reproducibility
     torch.manual_seed(42)
@@ -184,7 +192,6 @@ def main():
     print("Data loader created")
     # create feature extractor
     extractor = AutoModel.from_pretrained("owkin/phikon-v2").eval()
-    # image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
     image_processor = pre_processing_phikon()
     feature_extractor = (image_processor, extractor)
     # prepare spaghetti model

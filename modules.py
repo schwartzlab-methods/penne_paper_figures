@@ -13,7 +13,7 @@ import torch
 #! It uses a Domain Adversarial Neural Network (DANN) approach to align the feature distributions
 #! of the two domains.
 
-# Translator for features
+#* Translator for features
 class Translator(nn.Module):
     def __init__(self, feature_dim=1024, hidden_dim=512, output_dim=1024):
         super(Translator, self).__init__()
@@ -25,7 +25,7 @@ class Translator(nn.Module):
         x = F.relu(self.bn(self.fc1(x)))
         return self.fc2(x)  # No activation to keep range flexible
 
-# Gradient reversal layer (for adversarial training)
+#* Gradient reversal layer (for adversarial training)
 class GradReverse(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, alpha=1.0):
