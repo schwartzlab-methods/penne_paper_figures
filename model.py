@@ -5,6 +5,7 @@ import torchvision.transforms.v2 as v2
 import modules
 import pytorch_lightning as pl
 import random
+from modules import SpaghettiGenerator
 
 class GeneExpPredVisiumHD(pl.LightningModule):
     def __init__(self, num_genes, 
@@ -31,8 +32,17 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types).to(self.device)
             self.up_marker_genes_dict = up_marker_genes
         # feature extractors
-        self.feature_extractor = feature_extractor
-        converter = converter
+        self.image_processor, self.feature_extractor = feature_extractor
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
+        if converter:
+            self.converter = converter
+        else:
+            self.converter = SpaghettiGenerator(3, 9)
+        if not end_to_end:
+            for param in self.converter.parameters():
+                param.requires_grad = False
+            converter.eval()
         # hyperparameters
         self.end_to_end = end_to_end
         self.lr = lr
@@ -74,20 +84,24 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return loss / (4 * d * d)
 
     def forward(self, x, if_convert=False):
-        with torch.no_grad():
-            # if_convert is used to determine whether to use the converter or not
-            if if_convert:
-                x = self.converter(x)
-            x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1)
-            x = self.translator(x)
-            x = self.predictor(x)
-            return x
+        # if_convert is used to determine whether to use the converter or not
+        if if_convert:
+            x = self.converter(x)
+        x_converted = self.image_processor(x)#, return_tensors="pt", do_rescale=False)       
+        x = self.feature_extractor(x_converted).last_hidden_state[:, 0, :].view(x.shape[0], -1)
+        x = self.translator(x)
+        x = self.predictor(x)
+        x = torch.clamp(x, min=0)
+        x = x / (torch.sum(x, dim=-1, keepdim=True)+1e-10) * 1e6
+        x = torch.log2(x + 1)
+        return x
     
     def compute_feature(self, x, if_convert=False, if_translate=True):
         with torch.no_grad():
             if if_convert:
                 x = self.converter(x)
-            x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1)
+            x = self.image_processor(x)
+            x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
             if if_translate:
                 x = self.translator(x)
             return x
@@ -96,7 +110,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         with torch.no_grad():
             if if_convert:
                 x = self.converter(x)
-            x = self.feature_extractor(self.device, x)[:, 0, :].view(x.shape[0], -1)
+            x = self.image_processor(x)
+            x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
             if if_translate:
                 x = self.translator(x)
             x = self.predictor(x, return_gate=True)
@@ -153,13 +168,12 @@ class GeneExpPredVisiumHD(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         he_image, mtx, pcm_image, _, cell_type = batch
-        self.translator.train()
-        self.domain_discriminator.train()
-        self.predictor.train()
         # obtain the features
-        he_features = self.feature_extractor(self.device, he_image)[:, 0, :].view(he_image.shape[0], -1)#.detach()
-        pcm_features = self.feature_extractor(self.device, self.converter(pcm_image))[:, 0, :].view(pcm_image.shape[0], -1)#.detach()
-        
+        pcm_converted = self.converter(pcm_image)
+        pcm_converted = self.image_processor(pcm_converted)#, return_tensors="pt", do_rescale=False)
+        he_converted = self.image_processor(he_image)#, return_tensors="pt", do_rescale=False)
+        pcm_features = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).requires_grad_()#.detach()
+        he_features = self.feature_extractor(he_converted).last_hidden_state[:, 0, :].view(he_image.shape[0], -1).requires_grad_()#.detach()
         # Translator part
         he_translated = self.translator(he_features)
         pcm_translated = self.translator(pcm_features)
@@ -177,10 +191,18 @@ class GeneExpPredVisiumHD(pl.LightningModule):
 
         # Predictor part
         exp_pred = self.predictor(he_translated)
+        # normalize to counts per million and log2 transform
+        exp_pred = torch.clamp(exp_pred, min=0)
+        exp_pred = exp_pred / (torch.sum(exp_pred, dim=-1, keepdim=True)+1e-10) * 1e6
+        exp_pred = torch.log2(exp_pred + 1)
         prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
 
         if self.second_stage_training:
             pred_exp_pcm = self.predictor(pcm_translated)
+            # normalize to counts per million and log2 transform
+            pred_exp_pcm = torch.clamp(pred_exp_pcm, min=0)
+            pred_exp_pcm = pred_exp_pcm / (torch.sum(pred_exp_pcm, dim=-1, keepdim=True)+1e-10) * 1e6
+            pred_exp_pcm = torch.log2(pred_exp_pcm + 1)
             # cell type classification part
             cell_type_pred = self.cell_type_classifier(pred_exp_pcm)
             cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
@@ -205,13 +227,13 @@ class GeneExpPredVisiumHD(pl.LightningModule):
  
     def validation_step(self, batch, batch_idx):
         he_image, mtx, pcm_image, _, cell_type = batch
-        self.translator.eval()
-        self.domain_discriminator.eval()
-        self.predictor.eval()
         with torch.no_grad():
             # obtain the features
-            he_features = self.feature_extractor(self.device, he_image)[:, 0, :].view(he_image.shape[0], -1).detach()
-            pcm_features = self.feature_extractor(self.device, self.converter(pcm_image))[:, 0, :].view(pcm_image.shape[0], -1).detach()
+            pcm_converted = self.converter(pcm_image)
+            pcm_converted = self.image_processor(pcm_converted)#, return_tensors="pt", do_rescale=False)
+            he_converted = self.image_processor(he_image)#, return_tensors="pt", do_rescale=False)
+            pcm_features = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).detach()
+            he_features = self.feature_extractor(he_converted).last_hidden_state[:, 0, :].view(he_image.shape[0], -1).detach()
             # Translator part
             he_translated = self.translator(he_features)
             pcm_translated = self.translator(pcm_features)
@@ -225,9 +247,15 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             coral_loss = self.coral_loss(he_translated, pcm_translated)
             # Predictor part
             exp_pred = self.predictor(he_translated)
+            exp_pred = torch.clamp(exp_pred, min=0)
+            exp_pred = exp_pred / (torch.sum(exp_pred, dim=-1, keepdim=True)+1e-10) * 1e6
+            exp_pred = torch.log2(exp_pred + 1)
             prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
             if self.second_stage_training:
                 pred_exp_pcm = self.predictor(pcm_translated)
+                pred_exp_pcm = torch.clamp(pred_exp_pcm, min=0)
+                pred_exp_pcm = pred_exp_pcm / (torch.sum(pred_exp_pcm, dim=-1, keepdim=True)+1e-10) * 1e6
+                pred_exp_pcm = torch.log2(pred_exp_pcm + 1)
                 # cell type classification part
                 cell_type_pred = self.cell_type_classifier(pred_exp_pcm)
                 cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))

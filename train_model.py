@@ -2,28 +2,16 @@ import os
 import torch
 from torch.utils.data import random_split, DataLoader, ConcatDataset
 import pytorch_lightning as pl
+import torchvision.transforms.v2 as v2
+import torch.nn.functional as F
 from pytorch_lightning.loggers import CSVLogger
-from modules import SpaghettiGenerator
 from model import GeneExpPredVisiumHD
 from dataset import VisiumHD_Livecell_Dataset
 from transformers import AutoImageProcessor, AutoModel
+from _feature_extractors import init_spaghetti, pre_processing_phikon
 import argparse
-from _feature_extractors import owkin_features, spaghetti_convertion
 from tqdm import tqdm
 import pandas as pd
-
-def init_spaghetti(model_path: str, normalize=False) -> torch.nn.Module:
-    '''
-    Initialize the SPAGHETTI model for image translation
-    '''
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    generator = SpaghettiGenerator(3, 9, normalize=normalize)
-    generator.to(device)
-    ckpt = torch.load(model_path, map_location=device)["state_dict"]
-    # get only G_AB weights
-    ckpt = {k[5:]: v for k, v in ckpt.items() if ("G_AB" in k)}
-    generator.load_state_dict(ckpt)
-    return generator
 
 def find_checkpoint(dir: str):
     '''
@@ -195,14 +183,13 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
     print("Data loader created")
     # create feature extractor
-    feature_extractor = AutoModel.from_pretrained("owkin/phikon-v2")
-    image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
+    extractor = AutoModel.from_pretrained("owkin/phikon-v2").eval()
+    # image_processor = AutoImageProcessor.from_pretrained("owkin/phikon-v2")
+    image_processor = pre_processing_phikon()
+    feature_extractor = (image_processor, extractor)
     # prepare spaghetti model
-    spaghetti = init_spaghetti(args.spaghetti_model, normalize=args.end_to_end)
-    converter = (spaghetti if args.end_to_end
-                 else lambda x: spaghetti_convertion(spaghetti, 
-                                                     torch.device('cuda' if torch.cuda.is_available() else 'cpu'), 
-                                                     x))
+    spaghetti = init_spaghetti(args.spaghetti_model)
+    converter = spaghetti
     # start training
     train(train_loader, val_loader, 
           num_genes=dataset.datasets[0].num_genes,
@@ -216,7 +203,7 @@ def main():
           marker_gene_loss_weight=args.marker_gene_loss_weight,
           marker_across_cell=args.marker_across_cell,
           converter=converter,
-          feature_extractor=lambda device, x: owkin_features(feature_extractor, device, image_processor, x), 
+          feature_extractor=feature_extractor, 
           domain_weight=args.domain_weight, coral_loss_weight=args.coral_loss_weight,
           lr=args.lr, save_dir=args.output_dir, epochs=args.epochs, name=args.name)
 

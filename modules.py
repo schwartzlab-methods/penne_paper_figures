@@ -138,11 +138,10 @@ class ResidualBlock(nn.Module):
         return x + self.block(x)
 
 class SpaghettiGenerator(nn.Module):
-    def __init__(self, in_channels, num_residual_blocks=9, normalize=False):
+    def __init__(self, in_channels, num_residual_blocks=9):
         super(SpaghettiGenerator, self).__init__()
-        
-        self.normalize = normalize
 
+        self.normalization = v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
         # Inital Convolution  3*256*256 -> 64*256*256
         out_channels=64
         self.conv = nn.Sequential(
@@ -191,26 +190,18 @@ class SpaghettiGenerator(nn.Module):
         )
     
     def forward(self, x):
-        if self.normalize:
-            normalization = v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-            x = normalization(x)
-            x = self.conv(x)
-            x = self.down(x)
-            x = self.trans(x)
-            x = self.up(x)
-            x = self.out(x)
-            # normalize to range [0,1]
-            x = torch.clamp(x, min=-1, max=1)
-            min_val = x.min()
-            max_val = x.max()
-            x = (x-min_val)/(max(max_val-min_val, 1e-5))
-            x = torch.clamp(x, min=0, max=1) # ensure no overflow
-        else:
-            x = self.conv(x)
-            x = self.down(x)
-            x = self.trans(x)
-            x = self.up(x)
-            x = self.out(x)
+        x = self.normalization(x)
+        x = self.conv(x)
+        x = self.down(x)
+        x = self.trans(x)
+        x = self.up(x)
+        x = self.out(x)
+        # normalize to range [0,1]
+        x = torch.clamp(x, min=-1, max=1)
+        min_val = x.min()
+        max_val = x.max()
+        x = (x-min_val)/(max(max_val-min_val, 1e-5))
+        x = torch.clamp(x, min=0, max=1) # ensure no overflow
         return x
 
 #! PCM specific modules for aligning generating pcm predictions
