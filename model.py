@@ -50,8 +50,6 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to use across-cell information. Defaults to False.
             orthogonal_loss_weight (float, optional): 
                 Weight for orthogonal loss. Defaults to 0.0.
-            orthogonal_features (bool, optional): 
-                Whether to use orthogonal features. Defaults to False. 
         '''
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
@@ -168,6 +166,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             x = self.converter(x)
         x_converted = self.image_processor(x)      
         x = self.feature_extractor(x_converted).last_hidden_state[:, 0, :].view(x.shape[0], -1)
+        if self.make_ortho:
+            x = self.feature_biology_translator(x)
         x = self.translator(x)
         x = self.predictor(x)
         x = torch.clamp(x, min=0)
@@ -464,6 +464,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                                                                                       self.up_marker_genes_dict, across_cell=self.across_cell)
 
                 # total loss for validation
+                #!TODO - invesigate why only in validation is the discriminator loss NAN
                 total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
                 metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
                             "val_prediction_loss": prediction_loss.item(), "val_cell_type_loss": cell_type_loss.item(), 
