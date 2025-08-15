@@ -380,7 +380,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
             metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
                         "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item(), 
-                        "train_marker_gene_loss": marker_gene_loss.item()}
+                        "train_marker_gene_loss": marker_gene_loss}
             if self.make_ortho:
                 total_loss += ortho_loss
                 metrics["train_ortho_loss"] = ortho_loss.item()
@@ -467,7 +467,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
                 metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
                             "val_prediction_loss": prediction_loss.item(), "val_cell_type_loss": cell_type_loss.item(), 
-                            "val_marker_gene_loss": marker_gene_loss.item()}
+                            "val_marker_gene_loss": marker_gene_loss}
                 if self.make_ortho:
                     total_loss += ortho_loss
                     metrics["val_ortho_loss"] = ortho_loss.item()
