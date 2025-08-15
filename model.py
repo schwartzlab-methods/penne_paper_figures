@@ -128,23 +128,27 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         loss = torch.mean((xc - xct) ** 2)
         return loss / (4 * d * d)  # normalize by feature dimension
     
-    def orthogonal_loss(self, source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        '''Compute the orthogonal loss between source and target feature representations.
+    @staticmethod
+    def orthogonal_loss(biology: torch.Tensor, domain: torch.Tensor) -> torch.Tensor:
+        '''Compute the orthogonal loss between biology and target feature representations.
 
         Args:
-            source (torch.Tensor): 
-                Source feature representation of shape (batch_size, num_features).
-            target (torch.Tensor): 
-                Target feature representation of shape (batch_size, num_features).
+            biology (torch.Tensor): 
+                Biology feature representation of shape (batch_size, num_features).
+            domain (torch.Tensor): 
+                Domain feature representation of shape (batch_size, num_features).
 
         Returns:
             torch.Tensor: 
                 Orthogonal loss. 
-                Computed using the cosine similarity between the source and target feature representations.
+                Computed using the cosine similarity between the biology and domain feature representations.
         '''
-        source = F.normalize(source, dim=-1)
-        target = F.normalize(target, dim=-1)
-        return 1 - (source * target).sum(dim=-1).mean()
+        biology = biology - biology.mean(dim=0, keepdim=True)
+        domain = domain - domain.mean(dim=0, keepdim=True)
+
+        orthogonality_matrix = torch.matmul(biology.T, domain) / biology.size(0)
+        loss = torch.sum(orthogonality_matrix ** 2)
+        return loss
 
     def forward(self, x: torch.Tensor, if_convert: bool=False) -> torch.Tensor:
         '''Forward pass for the model.
