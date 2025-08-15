@@ -16,9 +16,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  second_order_weight=0.1,
                  cell_type_weight=0.0,
                  marker_gene_weight=0.0,
+                 orthogonal_loss_weight=0.0,
                  lr=1e-3,
-                 do_gmlp=True,
-                 across_cell=False):
+                 do_gmlp=True, across_cell=False):
         '''Gene expression prediction model for Visium HD data.
 
         Args:
@@ -48,17 +48,27 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to use Gated MLP for prediction. Defaults to True.
             across_cell (bool, optional): 
                 Whether to use across-cell information. Defaults to False.
+            orthogonal_loss_weight (float, optional): 
+                Weight for orthogonal loss. Defaults to 0.0.
+            orthogonal_features (bool, optional): 
+                Whether to use orthogonal features. Defaults to False. 
         '''
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
-        self.translator = modules.Translator().to(self.device)
-        self.domain_discriminator = modules.DomainDiscriminator(alpha=domain_weight).to(self.device)
+        self.translator = modules.Translator()
+        if orthogonal_loss_weight > 0:
+            self.feature_biology_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=756)
+            self.feature_domain_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=268)
+            self.orthogonal_loss_weight = orthogonal_loss_weight
+        self.domain_discriminator = modules.DomainDiscriminator(feature_in=268 if orthogonal_loss_weight > 0 else 1024, 
+                                                                alpha=domain_weight)
+        predictor_input_size = 756 if orthogonal_loss_weight > 0 else 1024
         if do_gmlp: # Use Gated MLP for prediction
-            self.predictor = modules.PredictorGMLP(input_size=1024, hidden_size=4056, output_size=num_genes).to(self.device)
+            self.predictor = modules.PredictorGMLP(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
         else:
-            self.predictor = modules.Predictor(input_size=1024, hidden_size=4056, output_size=num_genes).to(self.device)
+            self.predictor = modules.Predictor(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
         if up_marker_genes:
-            self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types).to(self.device)
+            self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types)
             self.up_marker_genes_dict = up_marker_genes
         # feature extractors
         self.image_processor, self.feature_extractor = feature_extractor
@@ -80,6 +90,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.cell_type_weight = cell_type_weight
         self.marker_gene_weight = marker_gene_weight
         self.second_stage_training = True if up_marker_genes else False
+        self.make_ortho = orthogonal_loss_weight > 0
         self.across_cell = across_cell
         # loss functions
         self.criterion = nn.MSELoss().to(self.device)
@@ -116,6 +127,24 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # Frobenius norm
         loss = torch.mean((xc - xct) ** 2)
         return loss / (4 * d * d)  # normalize by feature dimension
+    
+    def orthogonal_loss(self, source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        '''Compute the orthogonal loss between source and target feature representations.
+
+        Args:
+            source (torch.Tensor): 
+                Source feature representation of shape (batch_size, num_features).
+            target (torch.Tensor): 
+                Target feature representation of shape (batch_size, num_features).
+
+        Returns:
+            torch.Tensor: 
+                Orthogonal loss. 
+                Computed using the cosine similarity between the source and target feature representations.
+        '''
+        source = F.normalize(source, dim=-1)
+        target = F.normalize(target, dim=-1)
+        return 1 - (source * target).sum(dim=-1).mean()
 
     def forward(self, x: torch.Tensor, if_convert: bool=False) -> torch.Tensor:
         '''Forward pass for the model.
@@ -143,7 +172,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return x
     
     def compute_feature(self, x: torch.Tensor, if_convert: bool=False, 
-                        if_translate: bool=True) -> torch.Tensor:
+                        if_translate: bool=True, if_ortho: bool=True) -> torch.Tensor:
         '''Compute feature representation for the input tensor.
 
         Args:
@@ -153,6 +182,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to use the converter to convert into H&E like images. Defaults to False.
             if_translate (bool, optional): 
                 Whether to use the translator for better domain alignment. Defaults to True.
+            if_ortho (bool, optional): 
+                Whether to use the orthogonal translator. Defaults to True.
 
         Returns:
             torch.Tensor: 
@@ -166,10 +197,12 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
             if if_translate:
                 x = self.translator(x)
+            if if_ortho:
+                x = self.feature_biology_translator(x)
             return x
 
     def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
-                     if_translate: bool=True) -> torch.Tensor:
+                     if_translate: bool=True, if_ortho: bool=True) -> torch.Tensor:
         '''Compute gating vector for the input tensor.
 
         Args:
@@ -179,6 +212,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to use the converter to convert into H&E like images. Defaults to False.
             if_translate (bool, optional): 
                 Whether to use the translator for better domain alignment. Defaults to True.
+            if_ortho (bool, optional): 
+                Whether to use the orthogonal translator. Defaults to True.
 
         Returns:
             torch.Tensor: 
@@ -191,6 +226,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
             if if_translate:
                 x = self.translator(x)
+            if if_ortho:
+                x = self.feature_biology_translator(x)
             x = self.predictor(x, return_gate=True)
             return x
 
@@ -284,12 +321,28 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         pcm_features = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).requires_grad_()#.detach()
         he_features = self.feature_extractor(he_converted).last_hidden_state[:, 0, :].view(he_image.shape[0], -1).requires_grad_()#.detach()
         # Translator part
+        # this part translates the features into a common space
         he_translated = self.translator(he_features)
         pcm_translated = self.translator(pcm_features)
-    
+        if hasattr(self, "feature_biology_translator"):
+            he_translated_biology = self.feature_biology_translator(he_translated)
+            pcm_translated_biology = self.feature_biology_translator(pcm_translated)
+            he_translated_domain = self.feature_domain_translator(he_translated)
+            pcm_translated_domain = self.feature_domain_translator(pcm_translated)
+            # loss for this part
+            ortho_loss = (self.orthogonal_loss_weight
+                          * (self.orthogonal_loss(he_translated_biology, he_translated_domain) 
+                          + self.orthogonal_loss(pcm_translated_biology, pcm_translated_domain)) / 2)
+        else:
+            he_translated_biology = he_translated
+            pcm_translated_biology = pcm_translated
+            he_translated_domain = he_translated
+            pcm_translated_domain = pcm_translated
+
         # DANN part
-        pred_discriminator_fake = self.domain_discriminator(he_translated)
-        pred_discriminator_real = self.domain_discriminator(pcm_translated)
+        # this part is for domain adaptation, uses domain features only
+        pred_discriminator_fake = self.domain_discriminator(he_translated_domain)
+        pred_discriminator_real = self.domain_discriminator(pcm_translated_domain)
         fake_labels = torch.zeros_like(pred_discriminator_fake)
         real_labels = torch.ones_like(pred_discriminator_real)
         domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
@@ -297,7 +350,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         coral_loss = self.coral_loss(he_translated, pcm_translated)
 
         # Predictor part
-        exp_pred = self.predictor(he_translated)
+        # This part leverages the biological translated features
+        exp_pred = self.predictor(he_translated_biology)
         # normalize to counts per million and log2 transform
         exp_pred = torch.clamp(exp_pred, min=0)
         exp_pred = exp_pred / (torch.sum(exp_pred, dim=-1, keepdim=True)+1e-10) * 1e6
@@ -305,7 +359,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
 
         if self.second_stage_training:
-            pred_exp_pcm = self.predictor(pcm_translated)
+            pred_exp_pcm = self.predictor(pcm_translated_biology)
             # normalize to counts per million and log2 transform
             pred_exp_pcm = torch.clamp(pred_exp_pcm, min=0)
             pred_exp_pcm = pred_exp_pcm / (torch.sum(pred_exp_pcm, dim=-1, keepdim=True)+1e-10) * 1e6
@@ -321,14 +375,20 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # total loss for training
             total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
             metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                    "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item(), 
-                    "train_marker_gene_loss": marker_gene_loss}
-        
+                        "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item(), 
+                        "train_marker_gene_loss": marker_gene_loss.item()}
+            if self.make_ortho:
+                total_loss += ortho_loss
+                metrics["train_ortho_loss"] = ortho_loss.item()
         else:
             # total loss for training
             total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
             metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                    "train_prediction_loss": prediction_loss.item()}
+                        "train_prediction_loss": prediction_loss.item()}
+            if self.make_ortho:
+                total_loss += ortho_loss
+                metrics["train_ortho_loss"] = ortho_loss.item()
+                
         self.log_dict(metrics,prog_bar=True)
         return total_loss
  
@@ -358,22 +418,36 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # Translator part
             he_translated = self.translator(he_features)
             pcm_translated = self.translator(pcm_features)
+            if hasattr(self, "feature_biology_translator"):
+                he_translated_biology = self.feature_biology_translator(he_translated)
+                pcm_translated_biology = self.feature_biology_translator(pcm_translated)
+                he_translated_domain = self.feature_domain_translator(he_translated)
+                pcm_translated_domain = self.feature_domain_translator(pcm_translated)
+                # loss for this part
+                ortho_loss = (self.orthogonal_loss_weight
+                            * (self.orthogonal_loss(he_translated_biology, he_translated_domain) 
+                            + self.orthogonal_loss(pcm_translated_biology, pcm_translated_domain)) / 2)
+            else:
+                he_translated_biology = he_translated
+                pcm_translated_biology = pcm_translated
+                he_translated_domain = he_translated
+                pcm_translated_domain = pcm_translated
             # DANN part
-            pred_discriminator_fake = self.domain_discriminator(he_translated)
-            pred_discriminator_real = self.domain_discriminator(pcm_translated)
+            pred_discriminator_fake = self.domain_discriminator(he_translated_domain)
+            pred_discriminator_real = self.domain_discriminator(pcm_translated_domain)
             fake_labels = torch.zeros_like(pred_discriminator_fake)
             real_labels = torch.ones_like(pred_discriminator_real)
             domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                         self.domain_criterion(pred_discriminator_real, real_labels)) / 2
             coral_loss = self.coral_loss(he_translated, pcm_translated)
             # Predictor part
-            exp_pred = self.predictor(he_translated)
+            exp_pred = self.predictor(he_translated_biology)
             exp_pred = torch.clamp(exp_pred, min=0)
             exp_pred = exp_pred / (torch.sum(exp_pred, dim=-1, keepdim=True)+1e-10) * 1e6
             exp_pred = torch.log2(exp_pred + 1)
             prediction_loss = self.criterion(exp_pred, mtx.to(self.device))
             if self.second_stage_training:
-                pred_exp_pcm = self.predictor(pcm_translated)
+                pred_exp_pcm = self.predictor(pcm_translated_biology)
                 pred_exp_pcm = torch.clamp(pred_exp_pcm, min=0)
                 pred_exp_pcm = pred_exp_pcm / (torch.sum(pred_exp_pcm, dim=-1, keepdim=True)+1e-10) * 1e6
                 pred_exp_pcm = torch.log2(pred_exp_pcm + 1)
@@ -385,17 +459,22 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 marker_gene_loss = self.marker_gene_weight * self._marker_margin_loss(pred_exp_pcm, cell_type, 
                                                                                       self.up_marker_genes_dict, across_cell=self.across_cell)
 
-                # total loss for training
+                # total loss for validation
                 total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
-                metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                        "val_prediction_loss": prediction_loss.item(), "val_cell_type_loss": cell_type_loss.item(), 
-                        "val_marker_gene_loss": marker_gene_loss}
-            
+                metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
+                            "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item(), 
+                            "train_marker_gene_loss": marker_gene_loss.item()}
+                if self.make_ortho:
+                    total_loss += ortho_loss
+                    metrics["train_ortho_loss"] = ortho_loss.item()
             else:
-                # total loss for training
+                # total loss for validation
                 total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
-                metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                        "val_prediction_loss": prediction_loss.item()}
+                metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
+                            "train_prediction_loss": prediction_loss.item()}
+                if self.make_ortho:
+                    total_loss += ortho_loss
+                    metrics["train_ortho_loss"] = ortho_loss.item()
             self.log_dict(metrics,prog_bar=True, sync_dist=True)
 
     def configure_optimizers(self):

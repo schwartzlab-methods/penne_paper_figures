@@ -50,7 +50,7 @@ def read_tsv(file_path: str):
 #* Main training function
 def train(train_loader, val_loader, 
           num_genes, converter, feature_extractor,
-          num_cell_types, 
+          num_cell_types=0, 
           end_to_end=False,
           up_marker_genes=None,
           gene_names=None,
@@ -60,6 +60,7 @@ def train(train_loader, val_loader,
           marker_gene_loss_weight=0,
           marker_across_cell=False,
           domain_weight=5.0, coral_loss_weight=0.1,
+          orthogonal_weight=0.0,
           lr = 0.0001, save_dir = None, epochs=100, name="gene_predictor"):
     '''
     Train the gene expression prediction model using PyTorch Lightning.
@@ -67,6 +68,14 @@ def train(train_loader, val_loader,
         train_loader: the PyTorch Dataloader for the training dataset
         val_loader: the PyTorch Dataloader for the validation dataset
         num_genes: int, the number of genes in the dataset to predict
+        num_cell_types: int, the number of cell types in the dataset
+        up_marker_genes: str, the path to the upregulated marker genes file
+        gene_names: str, the path to the gene names file
+        pcm_cell_to_idx: dict, mapping from cell type names to their indices
+        celltypes: list, the list of cell types in the dataset
+        cell_type_loss_weight: float, the weight for the cell type loss, default 0.0
+        marker_gene_loss_weight: float, the weight for the marker gene loss, default 0.0
+        marker_across_cell: bool, whether to use across-cell information for marker gene prediction, default False
         converter: the converter module to convert the image to the right format
         feature_extractor: the feature extractor module to extract the features from the image
         domain_weight: float, the weight for the domain adaptation loss, default 5.0
@@ -74,6 +83,7 @@ def train(train_loader, val_loader,
         save_dir: str, the directory to save the model checkpoints and logs. Default current directory
         epochs: int, the number of epochs to train the model, default 100
         name: str, the name of the model for the logger, default "gene_predictor"
+        orthogonal_weight: float, the weight for the orthogonal loss, default 0.0
     '''
     ngpus_per_node = torch.cuda.device_count()
     num_nodes = int(os.environ.get("SLURM_NNODES"))
@@ -126,6 +136,7 @@ def train(train_loader, val_loader,
                                     domain_weight = domain_weight, 
                                     second_order_weight=coral_loss_weight,
                                     marker_gene_weight=marker_gene_loss_weight,
+                                    orthogonal_loss_weight=orthogonal_weight,
                                     cell_type_weight=cell_type_loss_weight,
                                     lr=lr, do_gmlp=True,
                                     across_cell=marker_across_cell)
@@ -173,6 +184,7 @@ def main():
                             help='Path to up marker genes for PCM cell type. If supplied, stage two training will be performed.')
     parser.add_argument('--marker_across_cell', action='store_true',
                             help='If set, the marker gene loss will be calculated across all cells. If not set, the marker gene loss will be calculated within each cell type.')
+    parser.add_argument('--orthogonal_weight', type=float, default=0, help='Weight for the orthogonal loss')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     args = parser.parse_args()
     print("Starting the training script with the following arguments:")
@@ -212,6 +224,7 @@ def main():
           converter=converter,
           feature_extractor=feature_extractor, 
           domain_weight=args.domain_weight, coral_loss_weight=args.coral_loss_weight,
+          orthogonal_weight=args.orthogonal_weight,
           lr=args.lr, save_dir=args.output_dir, epochs=args.epochs, name=args.name)
 
 

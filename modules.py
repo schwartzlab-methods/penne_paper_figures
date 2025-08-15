@@ -37,10 +37,10 @@ class GradReverse(torch.autograd.Function):
         return grad_output.neg() * ctx.alpha, None
 
 class DomainDiscriminator(nn.Module):
-    def __init__(self, alpha=1.0):
+    def __init__(self, feature_in=1024, alpha=1.0):
         super(DomainDiscriminator, self).__init__()
         self.model = nn.Sequential(
-            nn.Linear(1024, 512),
+            nn.Linear(feature_in, 512),
             nn.ReLU(),
             nn.BatchNorm1d(512),
             nn.Dropout(0.3),
@@ -64,6 +64,17 @@ class DomainDiscriminator(nn.Module):
         # Concatenate the two feature vectors
         out = GradReverse.apply(x, self.alpha)
         return self.model(out)
+
+#* Orthogonality translator
+class OrthogonalTranslator(nn.Module):
+    def __init__(self, feature_in=1024, feature_out=1024):
+        super(OrthogonalTranslator, self).__init__()
+        self.fc1 = nn.Linear(feature_in, feature_out)
+        self.fc2 = nn.Linear(feature_out, feature_out)
+        
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        return self.fc2(x)
 
 #! Prediction modules
 #! Predict the whole transcriptome from the image
