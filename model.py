@@ -351,7 +351,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         real_labels = torch.ones_like(pred_discriminator_real)
         domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                        self.domain_criterion(pred_discriminator_real, real_labels)) / 2
-        coral_loss = self.coral_loss(he_translated, pcm_translated)
+        coral_loss = self.coral_loss(he_translated_domain, pcm_translated_domain)
 
         # Predictor part
         # This part leverages the biological translated features
@@ -443,7 +443,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             real_labels = torch.ones_like(pred_discriminator_real)
             domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                         self.domain_criterion(pred_discriminator_real, real_labels)) / 2
-            coral_loss = self.coral_loss(he_translated, pcm_translated)
+            coral_loss = self.coral_loss(he_translated_domain, pcm_translated_domain)
             # Predictor part
             exp_pred = self.predictor(he_translated_biology)
             exp_pred = torch.clamp(exp_pred, min=0)
