@@ -8,6 +8,7 @@ import anndata as ad
 import scanpy as sc
 import torchvision.transforms.v2 as v2
 import torch
+import torch.nn.functional as F
 
 #! Microscopy only datasets
 class LiveCellDataset(Dataset):
@@ -373,3 +374,55 @@ class VisiumHD_Livecell_Dataset(Dataset):
         self.livecell_targets = [self.livecell_class_to_idx[x] for x in self.livecell_classes] # targets are the class indices
         assert len(self.livecell_path) == len(self.livecell_targets) == len(self.livecell_classes)
         self.livecell_class_count_dict = {k: self.livecell_classes.count(k) for k in np.unique(self.livecell_classes)}
+
+#! validation datasets
+#* Shane's sequencing for correlation
+class ShaneSeqDataset(Dataset):
+    '''Dataset for Shane's sequencing data.
+    This is used to see the correlation between images and the ground truth gene expression.
+    '''
+    def __init__(self, path: str):
+        experiments = os.listdir(path)
+        self.imgs = []
+        self.experiments = []
+        for exp in experiments:
+            exp_dir = os.path.join(path, exp, "Phase")
+            if os.path.isdir(exp_dir):
+                # grab only the 02d images
+                self.experiments.extend([f"{exp}_{img[9]}" for img in os.listdir(exp_dir) if "02d" in img ])
+                self.imgs.extend([os.path.join(exp_dir, img) for img in os.listdir(exp_dir) if "02d" in img])
+
+        self.transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+        ])
+    
+    @staticmethod
+    def extract_full_patches(img: torch.Tensor, patch_size=256):
+        # img: (C, H, W)
+        C, H, W = img.shape
+        img_batched = img.unsqueeze(0)  # (1, C, H, W)
+
+        # Only patches that fully fit will be returned
+        patches = F.unfold(
+            img_batched, 
+            kernel_size=patch_size, 
+            stride=patch_size
+        )
+
+        # Each column is a flattened patch
+        patches = patches.transpose(1, 2)  # (1, num_patches, C*ps*ps)
+        patches = patches.reshape(-1, C, patch_size, patch_size)
+        return patches
+
+    def __len__(self):
+        return len(self.imgs)
+    
+    def __getitem__(self, idx):
+        img_path = self.imgs[idx]
+        exp = self.experiments[idx]
+        img = Image.open(img_path).convert("RGB")
+        img = self.transform(img)
+        # chop into patches
+        imgs = self.extract_full_patches(img)  # (num_patches, 3, 256, 256)
+        return imgs, ([exp]*imgs.shape[0], [img_path]*imgs.shape[0], [exp]*imgs.shape[0])
