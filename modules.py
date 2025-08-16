@@ -37,7 +37,7 @@ class GradReverse(torch.autograd.Function):
         return grad_output.neg() * ctx.alpha, None
 
 class DomainDiscriminator(nn.Module):
-    def __init__(self, feature_in=1024, alpha=1.0):
+    def __init__(self, feature_in=1024, alpha=1.0, do_reversal=True):
         super(DomainDiscriminator, self).__init__()
         self.model = nn.Sequential(
             nn.Linear(feature_in, 512),
@@ -59,11 +59,14 @@ class DomainDiscriminator(nn.Module):
             nn.Sigmoid()
         )
         self.alpha = alpha
+        self.do_reversal = do_reversal
 
     def forward(self, x):
-        # Concatenate the two feature vectors
-        out = GradReverse.apply(x, self.alpha)
-        return self.model(out)
+        if self.do_reversal:
+            out = GradReverse.apply(x, self.alpha)
+            return self.model(out)
+        else:
+            return self.model(x)
 
 #* Orthogonality translator
 class OrthogonalTranslator(nn.Module):
@@ -71,7 +74,7 @@ class OrthogonalTranslator(nn.Module):
         super(OrthogonalTranslator, self).__init__()
         self.fc1 = nn.Linear(feature_in, feature_out)
         self.fc2 = nn.Linear(feature_out, feature_out)
-        
+
     def forward(self, x):
         x = F.relu(self.fc1(x))
         return self.fc2(x)

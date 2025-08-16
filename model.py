@@ -57,8 +57,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         if orthogonal_loss_weight > 0:
             self.feature_biology_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=756)
             self.feature_domain_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=268)
+            self.domain_separator = modules.DomainDiscriminator(feature_in=268, do_reversal=False)                                                           do_reversal=False)
             self.orthogonal_loss_weight = orthogonal_loss_weight
-        self.domain_discriminator = modules.DomainDiscriminator(feature_in=268 if orthogonal_loss_weight > 0 else 1024, 
+        self.domain_discriminator = modules.DomainDiscriminator(feature_in=756 if orthogonal_loss_weight > 0 else 1024, 
                                                                 alpha=domain_weight)
         predictor_input_size = 756 if orthogonal_loss_weight > 0 else 1024
         if do_gmlp: # Use Gated MLP for prediction
@@ -91,10 +92,12 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.make_ortho = orthogonal_loss_weight > 0
         self.across_cell = across_cell
         # loss functions
-        self.criterion = nn.MSELoss().to(self.device)
-        self.domain_criterion = nn.BCELoss().to(self.device)
+        self.criterion = nn.MSELoss()
+        self.domain_criterion = nn.BCELoss()
         if up_marker_genes:
-            self.cell_type_criterion = nn.CrossEntropyLoss().to(self.device)
+            self.cell_type_criterion = nn.CrossEntropyLoss()
+        if orthogonal_loss_weight > 0:
+            self.domain_separation_criterion = nn.BCELoss()
 
         self.save_hyperparameters(ignore=["converter", "feature_extractor"])
     
@@ -373,14 +376,23 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             pcm_translated_domain = pcm_translated
 
         # DANN part
-        # this part is for domain adaptation, uses domain features only
-        pred_discriminator_fake = self.domain_discriminator(he_translated_domain)
-        pred_discriminator_real = self.domain_discriminator(pcm_translated_domain)
+        # this part is for domain adaptation, uses biology features only
+        pred_discriminator_fake = self.domain_discriminator(he_translated_biology)
+        pred_discriminator_real = self.domain_discriminator(pcm_translated_biology)
         fake_labels = torch.zeros_like(pred_discriminator_fake)
         real_labels = torch.ones_like(pred_discriminator_real)
         domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                        self.domain_criterion(pred_discriminator_real, real_labels)) / 2
-        coral_loss = self.coral_loss(he_translated_domain, pcm_translated_domain)
+        coral_loss = self.coral_loss(he_translated_biology, pcm_translated_biology)
+
+        # this part is for domain seperation
+        he_domain_separated = self.domain_separator(he_translated_domain)
+        pcm_domain_separated = self.domain_separator(pcm_translated_domain)
+        he_domain_labels = torch.zeros_like(he_domain_separated)
+        pcm_domain_labels = torch.ones_like(pcm_domain_separated)
+        domain_separation_loss = (self.orthogonal_loss_weight * 
+                                  (self.domain_separation_criterion(he_domain_separated, he_domain_labels) + 
+                                   self.domain_separation_criterion(pcm_domain_separated, pcm_domain_labels)) / 2)
 
         # Predictor part
         # This part leverages the biological translated features
@@ -411,17 +423,19 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                         "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item(), 
                         "train_marker_gene_loss": marker_gene_loss}
             if self.make_ortho:
-                total_loss += ortho_loss
+                total_loss += (ortho_loss + domain_separation_loss)
                 metrics["train_ortho_loss"] = ortho_loss.item()
+                metrics["train_domain_separation_loss"] = domain_separation_loss.item()
         else:
             # total loss for training
             total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
             metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
                         "train_prediction_loss": prediction_loss.item()}
             if self.make_ortho:
-                total_loss += ortho_loss
+                total_loss += (ortho_loss + domain_separation_loss)
                 metrics["train_ortho_loss"] = ortho_loss.item()
-                
+                metrics["train_domain_separation_loss"] = domain_separation_loss.item()
+
         self.log_dict(metrics,prog_bar=True)
         return total_loss
  
@@ -466,13 +480,24 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 he_translated_domain = he_translated
                 pcm_translated_domain = pcm_translated
             # DANN part
-            pred_discriminator_fake = self.domain_discriminator(he_translated_domain)
-            pred_discriminator_real = self.domain_discriminator(pcm_translated_domain)
+            # this part is for domain adaptation, uses biology features only
+            pred_discriminator_fake = self.domain_discriminator(he_translated_biology)
+            pred_discriminator_real = self.domain_discriminator(pcm_translated_biology)
             fake_labels = torch.zeros_like(pred_discriminator_fake)
             real_labels = torch.ones_like(pred_discriminator_real)
             domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                         self.domain_criterion(pred_discriminator_real, real_labels)) / 2
-            coral_loss = self.coral_loss(he_translated_domain, pcm_translated_domain)
+            coral_loss = self.coral_loss(he_translated_biology, pcm_translated_biology)
+
+            # this part is for domain seperation
+            he_domain_separated = self.domain_separator(he_translated_domain)
+            pcm_domain_separated = self.domain_separator(pcm_translated_domain)
+            he_domain_labels = torch.zeros_like(he_domain_separated)
+            pcm_domain_labels = torch.ones_like(pcm_domain_separated)
+            domain_separation_loss = (self.orthogonal_loss_weight * 
+                                    (self.domain_separation_criterion(he_domain_separated, he_domain_labels) + 
+                                    self.domain_separation_criterion(pcm_domain_separated, pcm_domain_labels)) / 2)
+
             # Predictor part
             exp_pred = self.predictor(he_translated_biology)
             exp_pred = torch.clamp(exp_pred, min=0)
@@ -499,16 +524,18 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                             "val_prediction_loss": prediction_loss.item(), "val_cell_type_loss": cell_type_loss.item(), 
                             "val_marker_gene_loss": marker_gene_loss}
                 if self.make_ortho:
-                    total_loss += ortho_loss
+                    total_loss += (ortho_loss + domain_separation_loss)
                     metrics["val_ortho_loss"] = ortho_loss.item()
+                    metrics["val_domain_separation_loss"] = domain_separation_loss.item()
             else:
                 # total loss for validation
                 total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
                 metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
                             "val_prediction_loss": prediction_loss.item()}
                 if self.make_ortho:
-                    total_loss += ortho_loss
+                    total_loss += (ortho_loss + domain_separation_loss)
                     metrics["val_ortho_loss"] = ortho_loss.item()
+                    metrics["val_domain_separation_loss"] = domain_separation_loss.item()
             self.log_dict(metrics,prog_bar=True, sync_dist=True)
 
     def configure_optimizers(self):
