@@ -57,7 +57,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         if orthogonal_loss_weight > 0:
             self.feature_biology_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=756)
             self.feature_domain_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=268)
-            self.domain_separator = modules.DomainDiscriminator(feature_in=268, do_reversal=False)                                                           do_reversal=False)
+            self.domain_separator = modules.DomainDiscriminator(feature_in=268, do_reversal=False)
             self.orthogonal_loss_weight = orthogonal_loss_weight
         self.domain_discriminator = modules.DomainDiscriminator(feature_in=756 if orthogonal_loss_weight > 0 else 1024, 
                                                                 alpha=domain_weight)
