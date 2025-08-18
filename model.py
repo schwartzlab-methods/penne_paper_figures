@@ -53,7 +53,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         '''
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
-        self.translator = modules.Translator()
+        # self.translator = modules.Translator()
         if orthogonal_loss_weight > 0:
             self.feature_biology_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=756)
             self.feature_domain_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=268)
@@ -117,6 +117,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         ns = source.size(0)  # batch size
         nt = target.size(0)
 
+        # Check if batch sizes are valid
+        if ns < 2 or nt < 2:
+            return torch.tensor(0.0, device=source.device)
+
         # Source covariance
         xm = source - source.mean(dim=0, keepdim=True)
         xc = xm.t() @ xm / (ns - 1)
@@ -169,7 +173,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             x = self.converter(x)
         x_converted = self.image_processor(x)      
         x = self.feature_extractor(x_converted).last_hidden_state[:, 0, :].view(x.shape[0], -1)
-        x = self.translator(x)
+        # x = self.translator(x)
         if self.make_ortho:
             x = self.feature_biology_translator(x)
         x = self.predictor(x)
@@ -202,8 +206,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 x = self.converter(x)
             x = self.image_processor(x)
             x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
-            if if_translate:
-                x = self.translator(x)
+            # if if_translate:
+                # x = self.translator(x)
             if if_ortho:
                 x = self.feature_biology_translator(x)
             return x
@@ -231,8 +235,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 x = self.converter(x)
             x = self.image_processor(x)
             x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
-            if if_translate:
-                x = self.translator(x)
+            # if if_translate:
+                # x = self.translator(x)
             if if_ortho:
                 x = self.feature_biology_translator(x)
             x = self.predictor(x, return_gate=True)
@@ -261,8 +265,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 x = self.converter(x)
             x = self.image_processor(x)
             x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
-            if if_translate:
-                x = self.translator(x)
+            # if if_translate:
+                # x = self.translator(x)
             if if_ortho:
                 x = self.feature_domain_translator(x)
             return x
@@ -354,12 +358,12 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         pcm_converted = self.converter(pcm_image)
         pcm_converted = self.image_processor(pcm_converted)
         he_converted = self.image_processor(he_image)
-        pcm_features = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).requires_grad_()#.detach()
-        he_features = self.feature_extractor(he_converted).last_hidden_state[:, 0, :].view(he_image.shape[0], -1).requires_grad_()#.detach()
+        pcm_translated = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).requires_grad_()#.detach()
+        he_translated = self.feature_extractor(he_converted).last_hidden_state[:, 0, :].view(he_image.shape[0], -1).requires_grad_()#.detach()
         # Translator part
         # this part translates the features into a common space
-        he_translated = self.translator(he_features)
-        pcm_translated = self.translator(pcm_features)
+        # he_translated = self.translator(he_features)
+        # pcm_translated = self.translator(pcm_features)
         if hasattr(self, "feature_biology_translator"):
             he_translated_biology = self.feature_biology_translator(he_translated)
             pcm_translated_biology = self.feature_biology_translator(pcm_translated)
@@ -454,17 +458,17 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         Returns:
             loss (torch.Tensor): The computed loss for the batch.
         '''
-        he_image, mtx, pcm_image, _, cell_type = batch
+        he_image, mtx, pcm_image, name, cell_type = batch
         with torch.no_grad():
             # obtain the features
             pcm_converted = self.converter(pcm_image)
             pcm_converted = self.image_processor(pcm_converted)
             he_converted = self.image_processor(he_image)
-            pcm_features = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).detach()
-            he_features = self.feature_extractor(he_converted).last_hidden_state[:, 0, :].view(he_image.shape[0], -1).detach()
+            pcm_translated = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).detach()
+            he_translated = self.feature_extractor(he_converted).last_hidden_state[:, 0, :].view(he_image.shape[0], -1).detach()
             # Translator part
-            he_translated = self.translator(he_features)
-            pcm_translated = self.translator(pcm_features)
+            # he_translated = self.translator(he_features)
+            # pcm_translated = self.translator(pcm_features)
             if hasattr(self, "feature_biology_translator"):
                 he_translated_biology = self.feature_biology_translator(he_translated)
                 pcm_translated_biology = self.feature_biology_translator(pcm_translated)
@@ -518,7 +522,6 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                                                                                       self.up_marker_genes_dict, across_cell=self.across_cell)
 
                 # total loss for validation
-                #!TODO - invesigate why only in validation is the discriminator loss NAN
                 total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss + marker_gene_loss
                 metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
                             "val_prediction_loss": prediction_loss.item(), "val_cell_type_loss": cell_type_loss.item(), 
