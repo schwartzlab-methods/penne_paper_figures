@@ -56,7 +56,11 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # self.translator = modules.Translator()
         if orthogonal_loss_weight > 0:
             self.feature_biology_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=756)
+            self.feature_biology_projector_pcm = nn.Linear(756, 128)
+            self.feature_biology_projector_he = nn.Linear(756, 128)
             self.feature_domain_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=268)
+            self.feature_domain_projector_he = nn.Linear(268, 128)
+            self.feature_domain_projector_pcm = nn.Linear(268, 128)
             self.domain_separator = modules.DomainDiscriminator(feature_in=268, do_reversal=False)
             self.orthogonal_loss_weight = orthogonal_loss_weight
         self.domain_discriminator = modules.DomainDiscriminator(feature_in=756 if orthogonal_loss_weight > 0 else 1024, 
@@ -369,10 +373,16 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             pcm_translated_biology = self.feature_biology_translator(pcm_translated)
             he_translated_domain = self.feature_domain_translator(he_translated)
             pcm_translated_domain = self.feature_domain_translator(pcm_translated)
-            # loss for this part
+            # loss to enforce orthogonality between biological and domain features
+            # ortho loss that uses a projector to reduce dimensionality
+            projected_biology_he = self.feature_biology_projector_he(he_translated_biology)
+            projected_biology_pcm = self.feature_biology_projector_pcm(pcm_translated_biology)
+            projected_domain_he = self.feature_domain_projector_he(he_translated_domain)
+            projected_domain_pcm = self.feature_domain_projector_pcm(pcm_translated_domain)
+
             ortho_loss = (self.orthogonal_loss_weight
-                          * (self.orthogonal_loss(he_translated_biology, he_translated_domain) 
-                          + self.orthogonal_loss(pcm_translated_biology, pcm_translated_domain)) / 2)
+                          * (self.orthogonal_loss(projected_biology_he, projected_domain_he) 
+                          + self.orthogonal_loss(projected_biology_pcm, projected_domain_pcm)) / 2)
         else:
             he_translated_biology = he_translated
             pcm_translated_biology = pcm_translated
@@ -474,10 +484,15 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 pcm_translated_biology = self.feature_biology_translator(pcm_translated)
                 he_translated_domain = self.feature_domain_translator(he_translated)
                 pcm_translated_domain = self.feature_domain_translator(pcm_translated)
-                # loss for this part
+                # ortho loss that uses a projector to reduce dimensionality
+                projected_biology_he = self.feature_biology_projector_he(he_translated_biology)
+                projected_biology_pcm = self.feature_biology_projector_pcm(pcm_translated_biology)
+                projected_domain_he = self.feature_domain_projector_he(he_translated_domain)
+                projected_domain_pcm = self.feature_domain_projector_pcm(pcm_translated_domain)
+
                 ortho_loss = (self.orthogonal_loss_weight
-                            * (self.orthogonal_loss(he_translated_biology, he_translated_domain) 
-                            + self.orthogonal_loss(pcm_translated_biology, pcm_translated_domain)) / 2)
+                            * (self.orthogonal_loss(projected_biology_he, projected_domain_he) 
+                            + self.orthogonal_loss(projected_biology_pcm, projected_domain_pcm)) / 2)
             else:
                 he_translated_biology = he_translated
                 pcm_translated_biology = pcm_translated
