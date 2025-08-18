@@ -73,10 +73,11 @@ class OrthogonalTranslator(nn.Module):
     def __init__(self, feature_in=1024, feature_out=1024):
         super(OrthogonalTranslator, self).__init__()
         self.fc1 = nn.Linear(feature_in, feature_out)
+        self.bn1 = nn.BatchNorm1d(feature_out)
         self.fc2 = nn.Linear(feature_out, feature_out)
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
+        x = F.relu(self.bn1(self.fc1(x)))
         return self.fc2(x)
 
 #! Prediction modules
@@ -230,10 +231,12 @@ class CellTypeClassifier(nn.Module):
         super(CellTypeClassifier, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, num_classes)
+        self.norm = nn.LayerNorm(hidden_size)
         self.dropout = nn.Dropout(0.2)  # Dropout layer to prevent overfitting
         
     def forward(self, x):
         x = F.relu(self.fc1(x))
+        x = self.norm(x)
         x = self.dropout(x)
         x = self.fc2(x)
         return x
