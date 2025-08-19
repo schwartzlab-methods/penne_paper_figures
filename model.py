@@ -56,18 +56,18 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # self.translator = modules.Translator()
         if orthogonal_loss_weight > 0:
             # biology translator
-            self.feature_biology_translator_he = modules.OrthogonalTranslator(feature_in=1024, feature_out=756)
-            self.feature_biology_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=756)
+            self.feature_biology_translator_he = modules.OrthogonalTranslator(feature_in=1024, feature_out=896)
+            self.feature_biology_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=896)
             # domain translator
             self.feature_domain_translator_he = modules.OrthogonalTranslator(feature_in=1024, feature_out=128)
             self.feature_domain_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=128)
             # domain classifier
             #! to do: maybe a contrastive loss instead of BCE loss
-            self.domain_separator = modules.DomainDiscriminator(feature_in=268, do_reversal=False)
+            self.domain_separator = modules.DomainDiscriminator(feature_in=128, do_reversal=False)
             self.orthogonal_loss_weight = orthogonal_loss_weight
-        self.domain_discriminator = modules.DomainDiscriminator(feature_in=756 if orthogonal_loss_weight > 0 else 1024, 
+        self.domain_discriminator = modules.DomainDiscriminator(feature_in=896 if orthogonal_loss_weight > 0 else 1024, 
                                                                 alpha=domain_weight)
-        predictor_input_size = 756 if orthogonal_loss_weight > 0 else 1024
+        predictor_input_size = 896 if orthogonal_loss_weight > 0 else 1024
         if do_gmlp: # Use Gated MLP for prediction
             self.predictor = modules.PredictorGMLP(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
         else:
@@ -181,7 +181,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         x = self.feature_extractor(x_converted).last_hidden_state[:, 0, :].view(x.shape[0], -1)
         # x = self.translator(x)
         if self.make_ortho:
-            x = self.feature_biology_translator(x)
+            if if_convert:
+                x = self.feature_biology_translator_pcm(x)
+            else:
+                x = self.feature_biology_translator_he(x)
         x = self.predictor(x)
         x = torch.clamp(x, min=0)
         x = x / (torch.sum(x, dim=-1, keepdim=True)+1e-10) * 1e6
@@ -215,7 +218,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # if if_translate:
                 # x = self.translator(x)
             if if_ortho:
-                x = self.feature_biology_translator(x)
+                if if_convert:
+                    x = self.feature_biology_translator_pcm(x)
+                else:
+                    x = self.feature_biology_translator_he(x)
             return x
 
     def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
@@ -244,7 +250,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # if if_translate:
                 # x = self.translator(x)
             if if_ortho:
-                x = self.feature_biology_translator(x)
+                if if_convert:
+                    x = self.feature_biology_translator_pcm(x)
+                else:
+                    x = self.feature_biology_translator_he(x)
             x = self.predictor(x, return_gate=True)
             return x
 
@@ -274,7 +283,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # if if_translate:
                 # x = self.translator(x)
             if if_ortho:
-                x = self.feature_domain_translator(x)
+                if if_convert:
+                    x = self.feature_domain_translator_pcm(x)
+                else:
+                    x = self.feature_domain_translator_he(x)
             return x
 
     def _marker_margin_loss(self, pred_expr: torch.Tensor, cell_types: torch.Tensor,
