@@ -428,7 +428,7 @@ class ShaneSeqDataset(Dataset):
             img = img / 255.0
         # chop into patches
         imgs = self.extract_full_patches(img)  # (num_patches, 3, 256, 256)
-        return imgs, ([exp]*imgs.shape[0], [img_path]*imgs.shape[0], [exp]*imgs.shape[0])
+        return imgs, (torch.tensor([0]), img_path, exp)
 
 #* Shane's seuqnecing for cell type identification
 class ShaneSeqCellTypeDataset(Dataset):
