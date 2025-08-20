@@ -506,6 +506,7 @@ class ShaneSeqCellTypeDataset(Dataset):
         h = h / 6.0  # normalize to [0,1]
         return torch.stack([h, s, v], dim=1)
     
+    @staticmethod
     def rgb_to_lab(rgb):
         """
         Approximate RGB->Lab using D65 white point.
@@ -537,6 +538,7 @@ class ShaneSeqCellTypeDataset(Dataset):
         b = 200*(fY - fZ)
         return torch.stack([L,a,b], dim=1)
 
+    @staticmethod
     def otsu_threshold(values, nbins=256):
         """Compute Otsu threshold for 1D values in [0,1]."""
         if values.numel() == 0:
