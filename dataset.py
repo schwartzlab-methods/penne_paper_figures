@@ -382,6 +382,7 @@ class ShaneSeqDataset(Dataset):
     This is used to see the correlation between images and the ground truth gene expression.
     '''
     def __init__(self, path: str):
+        super(ShaneSeqDataset, self).__init__()
         experiments = os.listdir(path)
         self.imgs = []
         self.experiments = []
@@ -423,6 +424,176 @@ class ShaneSeqDataset(Dataset):
         exp = self.experiments[idx]
         img = Image.open(img_path).convert("RGB")
         img = self.transform(img)
+        if img.max().item() > 1:
+            img = img / 255.0
         # chop into patches
         imgs = self.extract_full_patches(img)  # (num_patches, 3, 256, 256)
         return imgs, ([exp]*imgs.shape[0], [img_path]*imgs.shape[0], [exp]*imgs.shape[0])
+
+#* Shane's seuqnecing for cell type identification
+class ShaneSeqCellTypeDataset(Dataset):
+    '''Dataset for Shane's sequencing data for cell type identification.
+    In this dataset, there are phase images and green chanel GFP images
+    The more GFP, the more likely the cell is MCF10A. Otherwise, the cell is HCT116.
+    The dataset will return the image and the green channel value (as a percentage of the total image size)
+    '''
+    def __init__(self, path: str):
+        super(ShaneSeqCellTypeDataset, self).__init__()
+        self.path = path
+        self.imgs = []
+        self.image_names = []
+        self.gfp_imgs = []
+        self._load_data()
+        self.transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+        ])
+    
+    @staticmethod
+    def extract_full_patches(img: torch.Tensor, patch_size=256):
+        # img: (C, H, W)
+        C, H, W = img.shape
+        img_batched = img.unsqueeze(0)  # (1, C, H, W)
+
+        # Only patches that fully fit will be returned
+        patches = F.unfold(
+            img_batched, 
+            kernel_size=patch_size, 
+            stride=patch_size
+        )
+
+        # Each column is a flattened patch
+        patches = patches.transpose(1, 2)  # (1, num_patches, C*ps*ps)
+        patches = patches.reshape(-1, C, patch_size, patch_size)
+        return patches
+
+    def _load_data(self):
+        # Load images and GFP values from the dataset
+        for img in os.listdir(os.path.join(self.path, "Phase")):
+            self.imgs.append(os.path.join(self.path, "Phase", img))
+            # compute GFP values
+            self.gfp_imgs.append(os.path.join(self.path, "GFP", img))
+            self.image_names.append(img)
+
+    @staticmethod
+    def rgb_to_hsv(rgb: torch.Tensor) -> torch.Tensor:
+        """
+        rgb: (B,3,H,W) in [0,1]
+        returns hsv: (B,3,H,W) with H∈[0,1], S∈[0,1], V∈[0,1]
+        """
+        r, g, b = rgb[:,0], rgb[:,1], rgb[:,2]  # (B,H,W)
+
+        maxc, _ = rgb.max(dim=1)
+        minc, _ = rgb.min(dim=1)
+        v = maxc
+        deltac = maxc - minc
+
+        # Saturation
+        s = torch.zeros_like(maxc)
+        mask = maxc > 1e-6
+        s[mask] = deltac[mask] / maxc[mask]
+
+        # Hue
+        h = torch.zeros_like(maxc)
+        mask_r = (maxc == r) & (deltac > 0)
+        mask_g = (maxc == g) & (deltac > 0)
+        mask_b = (maxc == b) & (deltac > 0)
+
+        h[mask_r] = ((g - b)[mask_r] / deltac[mask_r]) % 6
+        h[mask_g] = ((b - r)[mask_g] / deltac[mask_g]) + 2
+        h[mask_b] = ((r - g)[mask_b] / deltac[mask_b]) + 4
+
+        h = h / 6.0  # normalize to [0,1]
+        return torch.stack([h, s, v], dim=1)
+    
+    def rgb_to_lab(rgb):
+        """
+        Approximate RGB->Lab using D65 white point.
+        rgb: (B,3,H,W) in [0,1], assumed sRGB.
+        returns (B,3,H,W): L∈[0,100], a*, b*
+        """
+        # sRGB to linear
+        mask = rgb > 0.04045
+        rgb_lin = torch.where(mask, ((rgb + 0.055) / 1.055) ** 2.4, rgb / 12.92)
+
+        # RGB to XYZ
+        mat = torch.tensor([[0.4124564, 0.3575761, 0.1804375],
+                            [0.2126729, 0.7151522, 0.0721750],
+                            [0.0193339, 0.1191920, 0.9503041]], device=rgb.device)
+        xyz = torch.einsum('ij,bjhw->bihw', mat, rgb_lin)
+
+        # Normalize by D65
+        xyz_ref = torch.tensor([0.95047, 1.0, 1.08883], device=rgb.device).view(1,3,1,1)
+        xyz = xyz / xyz_ref
+
+        # f(t) helper
+        eps, kappa = 216/24389, 24389/27
+        def f(t):
+            return torch.where(t > eps, t**(1/3), (kappa * t + 16)/116)
+
+        fX, fY, fZ = f(xyz[:,0]), f(xyz[:,1]), f(xyz[:,2])
+        L = 116*fY - 16
+        a = 500*(fX - fY)
+        b = 200*(fY - fZ)
+        return torch.stack([L,a,b], dim=1)
+
+    def otsu_threshold(values, nbins=256):
+        """Compute Otsu threshold for 1D values in [0,1]."""
+        if values.numel() == 0:
+            return 1.0
+        hist = torch.histc(values, bins=nbins, min=0.0, max=1.0)
+        prob = hist / hist.sum()
+        omega = torch.cumsum(prob, 0)
+        mu = torch.cumsum(prob * torch.arange(1,nbins+1, device=values.device), 0)
+        mu_t = mu[-1]
+        sigma_b = (mu_t*omega - mu)**2 / (omega*(1-omega) + 1e-9)
+        idx = torch.argmax(sigma_b)
+        return (idx.float()+0.5)/nbins
+    
+    def _extract_gfp_value(self, batch_rgb: torch.Tensor, sat_thresh=0.3, a_thresh=-6) -> float:
+        """
+        batch_rgb: (B,3,H,W) in [0,1]
+        returns: (B,) tensor of % bright green area
+        """
+        hsv = self.rgb_to_hsv(batch_rgb)
+        lab = self.rgb_to_lab(batch_rgb)
+
+        H, S, V = hsv[:,0], hsv[:,1], hsv[:,2]
+        L, a, b = lab[:,0], lab[:,1], lab[:,2]
+
+        # Hue in green range (approx 70°–170° → 0.2–0.47 in [0,1])
+        green_band = (H > 70/360) & (H < 170/360)
+        sat_ok = S > sat_thresh
+        a_green = a < a_thresh
+
+        green_mask = green_band & sat_ok & a_green
+
+        B,_,Hh,Ww = batch_rgb.shape
+        results = []
+        for i in range(B):
+            vals = V[i][green_mask[i]]
+            thr = self.otsu_threshold(vals.flatten())
+            bright_mask = green_mask[i] & (V[i] >= thr)
+            percent = bright_mask.float().mean()
+            results.append(percent)
+        return torch.tensor(results, device=batch_rgb.device) #shape (B,)
+
+    def __len__(self):
+        return len(self.imgs)
+
+    def __getitem__(self, idx):
+        img_path = self.imgs[idx]
+        img_name = self.image_names[idx]
+        gfp_path = self.gfp_imgs[idx]
+        img = self.transform(Image.open(img_path).convert("RGB"))
+        gfp_img = self.transform(Image.open(gfp_path).convert("RGB"))
+        if img.max().item() > 1:
+            img = img / 255.0
+        if gfp_img.max().item() > 1:
+            gfp_img = gfp_img / 255.0
+        # make them all 256x256 patches
+        img_patches = self.extract_full_patches(img)
+        gfp_patches = self.extract_full_patches(gfp_img)
+        # compute the gfp value for each patch
+        gfp_values = self._extract_gfp_value(gfp_patches).view(-1, 1)
+        return img_patches, (gfp_values, img_name)
