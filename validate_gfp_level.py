@@ -76,12 +76,12 @@ def main():
         genes = np.loadtxt(args.gene_names, dtype=str, delimiter='\t')
         gene_names = genes[:,1].reshape(-1)
         gene_symbols = genes[:,0].reshape(-1)
-        np.save(os.path.join(args.output_dir, f"{args.name}_gene_symbols.npy"), gene_symbols)
+        np.save(os.path.join(args.output_dir, f"gene_symbols.npy"), gene_symbols)
     else: # assume txt file
         with open(args.gene_names, 'r') as f:
             gene_names = [line.strip() for line in f.readlines() if "Unnamed: 0" not in line]
         gene_names = np.array(gene_names).reshape(-1)
-    np.save(os.path.join(args.output_dir, f"{args.name}_gene_names.npy"), gene_names)
+    np.save(os.path.join(args.output_dir, f"gene_names.npy"), gene_names)
     print("Gene symbols saved to ", args.output_dir)
     num_genes = gene_names.shape[0]
     # prep model
