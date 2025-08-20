@@ -68,12 +68,13 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.domain_discriminator = modules.DomainDiscriminator(feature_in=896 if orthogonal_loss_weight > 0 else 1024, 
                                                                 alpha=domain_weight)
         predictor_input_size = 896 if orthogonal_loss_weight > 0 else 1024
+        self.cell_type_classifier = modules.CellTypeClassifier(input_size=896, hidden_size=512, num_classes=num_cell_types)
         if do_gmlp: # Use Gated MLP for prediction
             self.predictor = modules.PredictorGMLP(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
         else:
             self.predictor = modules.Predictor(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
         if up_marker_genes:
-            self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types)
+            # self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types)
             self.up_marker_genes_dict = up_marker_genes
         # feature extractors
         self.image_processor, self.feature_extractor = feature_extractor
@@ -398,15 +399,20 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             he_translated_domain = he_translated
             pcm_translated_domain = pcm_translated
 
-        # DANN part
+        # Domain alignment
         # this part is for domain adaptation, uses biology features only
+        # DANN
         pred_discriminator_fake = self.domain_discriminator(he_translated_biology)
         pred_discriminator_real = self.domain_discriminator(pcm_translated_biology)
         fake_labels = torch.zeros_like(pred_discriminator_fake)
         real_labels = torch.ones_like(pred_discriminator_real)
         domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                        self.domain_criterion(pred_discriminator_real, real_labels)) / 2
+        # Coral Loss
         coral_loss = self.coral_loss(he_translated_biology, pcm_translated_biology)
+        # cell type loss
+        cell_type_pred = self.cell_type_classifier(pcm_translated_biology)
+        cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
         # this part is for domain seperation
         he_domain_separated = self.domain_separator(he_translated_domain)
@@ -433,8 +439,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             pred_exp_pcm = pred_exp_pcm / (torch.sum(pred_exp_pcm, dim=-1, keepdim=True)+1e-10) * 1e6
             pred_exp_pcm = torch.log2(pred_exp_pcm + 1)
             # cell type classification part
-            cell_type_pred = self.cell_type_classifier(pred_exp_pcm)
-            cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
+            # cell_type_pred = self.cell_type_classifier(pred_exp_pcm)
+            # cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
             # marker gene loss
             marker_gene_loss = self.marker_gene_weight * self._marker_margin_loss(pred_exp_pcm, cell_type, 
@@ -451,9 +457,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 metrics["train_domain_separation_loss"] = domain_separation_loss.item()
         else:
             # total loss for training
-            total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
+            total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss
             metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                        "train_prediction_loss": prediction_loss.item()}
+                        "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item()}
             if self.make_ortho:
                 total_loss += (ortho_loss + domain_separation_loss)
                 metrics["train_ortho_loss"] = ortho_loss.item()
@@ -511,6 +517,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                         self.domain_criterion(pred_discriminator_real, real_labels)) / 2
             coral_loss = self.coral_loss(he_translated_biology, pcm_translated_biology)
+            cell_type_pred = self.cell_type_classifier(pcm_translated_biology)
+            cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
             # this part is for domain seperation
             he_domain_separated = self.domain_separator(he_translated_domain)
@@ -533,8 +541,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 pred_exp_pcm = pred_exp_pcm / (torch.sum(pred_exp_pcm, dim=-1, keepdim=True)+1e-10) * 1e6
                 pred_exp_pcm = torch.log2(pred_exp_pcm + 1)
                 # cell type classification part
-                cell_type_pred = self.cell_type_classifier(pred_exp_pcm)
-                cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
+                # cell_type_pred = self.cell_type_classifier(pred_exp_pcm)
+                # cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
 
                 # marker gene loss
                 marker_gene_loss = self.marker_gene_weight * self._marker_margin_loss(pred_exp_pcm, cell_type, 
@@ -551,9 +559,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                     metrics["val_domain_separation_loss"] = domain_separation_loss.item()
             else:
                 # total loss for validation
-                total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss
+                total_loss = prediction_loss + domain_loss + self.coral_loss_weight * coral_loss + cell_type_loss
                 metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item()+self.coral_loss_weight*coral_loss.item(), 
-                            "val_prediction_loss": prediction_loss.item()}
+                            "val_prediction_loss": prediction_loss.item(), "val_cell_type_loss": cell_type_loss.item()}
                 if self.make_ortho:
                     total_loss += (ortho_loss + domain_separation_loss)
                     metrics["val_ortho_loss"] = ortho_loss.item()

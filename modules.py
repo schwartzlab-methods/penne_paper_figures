@@ -234,7 +234,8 @@ class CellTypeClassifier(nn.Module):
     def __init__(self, input_size, num_classes, hidden_size = 512):
         super(CellTypeClassifier, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, num_classes)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, num_classes)
         self.norm = nn.LayerNorm(hidden_size)
         self.dropout = nn.Dropout(0.2)  # Dropout layer to prevent overfitting
         
@@ -242,5 +243,6 @@ class CellTypeClassifier(nn.Module):
         x = F.relu(self.fc1(x))
         x = self.norm(x)
         x = self.dropout(x)
-        x = self.fc2(x)
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         return x
