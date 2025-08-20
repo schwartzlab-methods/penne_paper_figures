@@ -69,6 +69,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                                                                 alpha=domain_weight)
         predictor_input_size = 896 if orthogonal_loss_weight > 0 else 1024
         self.cell_type_classifier = modules.CellTypeClassifier(input_size=896, hidden_size=512, num_classes=num_cell_types)
+        self.cell_type_criterion = nn.CrossEntropyLoss()
         if do_gmlp: # Use Gated MLP for prediction
             self.predictor = modules.PredictorGMLP(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
         else:
@@ -101,8 +102,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # loss functions
         self.criterion = nn.MSELoss()
         self.domain_criterion = nn.BCELoss()
-        if up_marker_genes:
-            self.cell_type_criterion = nn.CrossEntropyLoss()
+        # if up_marker_genes:
+        #     self.cell_type_criterion = nn.CrossEntropyLoss()
         if orthogonal_loss_weight > 0:
             self.domain_separation_criterion = nn.BCELoss()
 
