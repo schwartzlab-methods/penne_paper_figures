@@ -46,17 +46,17 @@ class DomainDiscriminator(nn.Module):
         self.model = nn.Sequential(
             nn.Linear(feature_in, 512),
             nn.ReLU(),
-            nn.BatchNorm1d(512),
+            nn.LayerNorm(512),
             nn.Dropout(0.3),
 
             nn.Linear(512, 256),
             nn.ReLU(),
-            nn.BatchNorm1d(256),
+            nn.LayerNorm(256),
             nn.Dropout(0.3),
 
             nn.Linear(256, 128),
             nn.ReLU(),
-            nn.BatchNorm1d(128),
+            nn.LayerNorm(128),
             nn.Dropout(0.3),
 
             nn.Linear(128, 1),
@@ -101,6 +101,18 @@ class Predictor(nn.Module):
         x = self.dropout(x)
         x = F.relu(self.fc3(x))
         return x
+
+class HSICProjector(nn.Module):
+    def __init__(self, d_x, d_y, proj_dim=128):
+        super().__init__()
+        self.px = nn.Linear(d_x, proj_dim)
+        self.py = nn.Linear(d_y, proj_dim)
+
+    def forward(self, x, y):
+        # L2-normalize to stabilize distances
+        x = F.normalize(self.px(x), dim=1)
+        y = F.normalize(self.py(y), dim=1)
+        return x, y
 
 class GatedMLPBlock(nn.Module):
     def __init__(self, input_size, hidden_size, p=0.2):

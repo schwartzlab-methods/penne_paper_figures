@@ -64,6 +64,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # domain classifier
             self.domain_separator = modules.DomainDiscriminator(feature_in=128, do_reversal=False)
             self.orthogonal_loss_weight = orthogonal_loss_weight
+            # HSIC projector
+            self.projector_pcm = modules.HSICProjector(d_x=896, d_y=128, proj_dim=128)
+            self.projector_he = modules.HSICProjector(d_x=896, d_y=128, proj_dim=128)
         self.domain_discriminator = modules.DomainDiscriminator(feature_in=896 if orthogonal_loss_weight > 0 else 1024, 
                                                                 alpha=domain_weight)
         predictor_input_size = 896 if orthogonal_loss_weight > 0 else 1024
@@ -163,18 +166,44 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return loss
 
     @staticmethod
-    def supcon_loss(z, labels, temperature=0.07):
-        """z: [batch, dim], labels: [batch]"""
-        z = F.normalize(z, dim=1)
-        batch_size = z.size(0)
-        mask = torch.eq(labels.unsqueeze(1), labels.unsqueeze(0)).float().to(z.device)
-        sim = torch.matmul(z, z.T) / temperature
-        sim_exp = torch.exp(sim) * (1 - torch.eye(batch_size, device=z.device))
-        log_prob = sim_exp / sim_exp.sum(dim=1, keepdim=True)
-        loss = -torch.log(log_prob + 1e-8) * mask
-        loss = loss.sum() / mask.sum()
-        return loss
+    def hsic_rbf(x, y, sigma2_x=None, sigma2_y=None):
+        """
+        Biased HSIC estimate with RBF kernels (works well in practice).
+        x: [B, Dx], y: [B, Dy]
+        Returns a scalar HSIC >= 0. Larger => more dependence.
+        """
+        def _rbf_kernel(x, sigma2=None, eps=1e-8):
+            # x: [B, D]
+            # pairwise squared distances
+            d2 = torch.cdist(x, x, p=2.0) ** 2            # [B,B]
+            if sigma2 is None:
+                # median heuristic (detach to stabilize); add eps to avoid zero
+                sigma2 = torch.median(d2.detach())
+                sigma2 = torch.clamp(sigma2, min=eps)
+            K = torch.exp(-d2 / (2.0 * sigma2))
+            return K
+        
+        B = x.size(0)
+        if B < 4:
+            # HSIC needs some batch size; return 0 to avoid noise
+            return x.new_tensor(0.0)
 
+        # Center features to reduce mean effects (optional but helpful)
+        x = x - x.mean(dim=0, keepdim=True)
+        y = y - y.mean(dim=0, keepdim=True)
+
+        Kx = _rbf_kernel(x, sigma2_x)
+        Ky = _rbf_kernel(y, sigma2_y)
+
+        # Center Gram matrices: H = I - 1/B * 11^T
+        H = torch.eye(B, device=x.device) - (1.0 / B) * torch.ones(B, B, device=x.device)
+        Kc = H @ Kx @ H
+        Lc = H @ Ky @ H
+
+        # Biased HSIC (normalized by (B-1)^2 to keep scales reasonable)
+        hsic = (Kc * Lc).sum() / ((B - 1) ** 2)
+        return hsic
+    
     def forward(self, x: torch.Tensor, if_convert: bool=False) -> torch.Tensor:
         '''Forward pass for the model.
 
@@ -402,10 +431,16 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             he_translated_domain = self.feature_domain_translator_he(he_translated)
             pcm_translated_domain = self.feature_domain_translator_pcm(pcm_translated)
             # loss to enforce orthogonality between biological and domain features
+            pcm_bio_proj, pcm_domain_proj = self.projector_pcm(pcm_translated_biology, pcm_translated_domain)
+            he_bio_proj, he_domain_proj = self.projector_he(he_translated_biology, he_translated_domain)
+            dot_product_loss = (self.orthogonal_loss_weight
+                          * (self.orthogonal_loss(pcm_bio_proj, pcm_domain_proj) 
+                          + self.orthogonal_loss(he_bio_proj, he_domain_proj)) / 2)
 
-            ortho_loss = (self.orthogonal_loss_weight
-                          * (self.orthogonal_loss(he_translated_biology, he_translated_domain) 
-                          + self.orthogonal_loss(pcm_translated_biology, pcm_translated_domain)) / 2)
+            hsic_loss = (self.orthogonal_loss_weight
+                         * (self.hsic_rbf((pcm_bio_proj), pcm_domain_proj) 
+                          + self.hsic_rbf((he_bio_proj), he_domain_proj)) / 2)
+            ortho_loss = dot_product_loss + hsic_loss
         else:
             he_translated_biology = he_translated
             pcm_translated_biology = pcm_translated
@@ -512,10 +547,17 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 pcm_translated_biology = self.feature_biology_translator_pcm(pcm_translated)
                 he_translated_domain = self.feature_domain_translator_he(he_translated)
                 pcm_translated_domain = self.feature_domain_translator_pcm(pcm_translated)
+                # loss to enforce orthogonality between biological and domain features
+                pcm_bio_proj, pcm_domain_proj = self.projector_pcm(pcm_translated_biology, pcm_translated_domain)
+                he_bio_proj, he_domain_proj = self.projector_he(he_translated_biology, he_translated_domain)
+                dot_product_loss = (self.orthogonal_loss_weight
+                            * (self.orthogonal_loss(pcm_bio_proj, pcm_domain_proj) 
+                            + self.orthogonal_loss(he_bio_proj, he_domain_proj)) / 2)
 
-                ortho_loss = (self.orthogonal_loss_weight
-                            * (self.orthogonal_loss(he_translated_biology, he_translated_domain) 
-                            + self.orthogonal_loss(pcm_translated_biology, pcm_translated_domain)) / 2)
+                hsic_loss = (self.orthogonal_loss_weight
+                            * (self.hsic_rbf((pcm_bio_proj), pcm_domain_proj) 
+                            + self.hsic_rbf((he_bio_proj), he_domain_proj)) / 2)
+                ortho_loss = dot_product_loss + hsic_loss
             else:
                 he_translated_biology = he_translated
                 pcm_translated_biology = pcm_translated
