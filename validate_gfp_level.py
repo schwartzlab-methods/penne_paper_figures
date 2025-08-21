@@ -40,13 +40,11 @@ def feature_label_analysis(X, X_label, y):
     y = y.squeeze()
     B, _ = X.shape
 
-    # results = {"Sample": [], "Pearson": [], "Spearman": [], "MutualInfo": []}
-    # for i in range(B):
-    #     results["Sample"].append(X_label[i])
-    #     results["Pearson"].append(np.corrcoef(X[i], y)[0, 1])
-    #     results["Spearman"].append(spearmanr(X[i], y).correlation)
-    results = {}
-    results["Sample"] = X_label
+    results = {"Feature": [], "Pearson": [], "Spearman": [], "MutualInfo": []}
+    for i in range(B):
+        results["Feature"].append(X_label[i])
+        results["Pearson"].append(np.corrcoef(X[:, i].reshape(-1), y)[0, 1])
+        results["Spearman"].append(spearmanr(X[:, i].reshape(-1), y).correlation)
     results["MutualInfo"]= list((mutual_info_regression(X, y, discrete_features='auto')))
 
     return pd.DataFrame(results)
@@ -112,7 +110,7 @@ def main():
     np.save(os.path.join(args.output_dir, f"shane_cell_type_gfp.npy"), gfp_L)
     np.save(os.path.join(args.output_dir, f"shane_cell_type_img_names.npy"), img_name_L)
 
-    corr_df = feature_label_analysis(pred_L, img_name_L, gfp_L)
+    corr_df = feature_label_analysis(pred_L, gene_names, gfp_L)
     corr_df.to_csv(os.path.join(args.output_dir, "shane_cell_type_corr.csv"), index=False)
     # plot violin plots for each stats
     plt.figure(figsize=(12, 6))
