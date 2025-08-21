@@ -68,8 +68,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.domain_discriminator = modules.DomainDiscriminator(feature_in=896 if orthogonal_loss_weight > 0 else 1024, 
                                                                 alpha=domain_weight)
         predictor_input_size = 896 if orthogonal_loss_weight > 0 else 1024
-        self.cell_type_classifier = modules.CellTypeClassifier(input_size=896, hidden_size=512, num_classes=num_cell_types)
-        self.cell_type_criterion = nn.CrossEntropyLoss()
+        # self.cell_type_classifier = modules.CellTypeClassifier(input_size=896, hidden_size=512, num_classes=num_cell_types)
+        # self.cell_type_criterion = nn.CrossEntropyLoss()
         if do_gmlp: # Use Gated MLP for prediction
             self.predictor = modules.PredictorGMLP(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
         else:
@@ -161,6 +161,19 @@ class GeneExpPredVisiumHD(pl.LightningModule):
 
         orthogonality_matrix = torch.matmul(biology.T, domain) / biology.size(0)
         loss = torch.sum(orthogonality_matrix ** 2)
+        return loss
+
+    @staticmethod
+    def supcon_loss(z, labels, temperature=0.07):
+        """z: [batch, dim], labels: [batch]"""
+        z = F.normalize(z, dim=1)
+        batch_size = z.size(0)
+        mask = torch.eq(labels.unsqueeze(1), labels.unsqueeze(0)).float().to(z.device)
+        sim = torch.matmul(z, z.T) / temperature
+        sim_exp = torch.exp(sim) * (1 - torch.eye(batch_size, device=z.device))
+        log_prob = sim_exp / sim_exp.sum(dim=1, keepdim=True)
+        loss = -torch.log(log_prob + 1e-8) * mask
+        loss = loss.sum() / mask.sum()
         return loss
 
     def forward(self, x: torch.Tensor, if_convert: bool=False) -> torch.Tensor:
@@ -412,8 +425,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # Coral Loss
         coral_loss = self.coral_loss(he_translated_biology, pcm_translated_biology)
         # cell type loss
-        cell_type_pred = self.cell_type_classifier(pcm_translated_biology)
-        cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
+        # cell_type_pred = self.cell_type_classifier(pcm_translated_biology)
+        # cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
+        cell_type_loss = self.cell_type_weight * self.supcon_loss(pcm_translated_biology, cell_type.to(self.device))
 
         # this part is for domain seperation
         he_domain_separated = self.domain_separator(he_translated_domain)
@@ -518,8 +532,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             domain_loss = (self.domain_criterion(pred_discriminator_fake, fake_labels) + 
                         self.domain_criterion(pred_discriminator_real, real_labels)) / 2
             coral_loss = self.coral_loss(he_translated_biology, pcm_translated_biology)
-            cell_type_pred = self.cell_type_classifier(pcm_translated_biology)
-            cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
+            # PCM Cell Type loss
+            # cell_type_pred = self.cell_type_classifier(pcm_translated_biology)
+            # cell_type_loss = self.cell_type_weight * self.cell_type_criterion(cell_type_pred, cell_type.to(self.device))
+            cell_type_loss = self.cell_type_weight * self.supcon_loss(pcm_translated_biology, cell_type.to(self.device))
 
             # this part is for domain seperation
             he_domain_separated = self.domain_separator(he_translated_domain)
