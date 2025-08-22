@@ -56,21 +56,20 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # self.translator = modules.Translator()
         if orthogonal_loss_weight > 0:
             # biology translator
-            self.feature_biology_translator_he = modules.OrthogonalTranslator(feature_in=1024, feature_out=896)
-            self.feature_biology_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=896)
+            self.feature_biology_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=768)
+            # self.feature_biology_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=896)
             # domain translator
-            self.feature_domain_translator_he = modules.OrthogonalTranslator(feature_in=1024, feature_out=128)
-            self.feature_domain_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=128)
+            self.feature_domain_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=256)
+            # self.feature_domain_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=128)
             # domain classifier
             self.domain_separator = modules.DomainDiscriminator(feature_in=128, do_reversal=False)
             self.orthogonal_loss_weight = orthogonal_loss_weight
             # HSIC projector
-            self.projector_pcm = modules.HSICProjector(d_x=896, d_y=128, proj_dim=128)
-            self.projector_he = modules.HSICProjector(d_x=896, d_y=128, proj_dim=128)
-        self.domain_discriminator = modules.DomainDiscriminator(feature_in=896 if orthogonal_loss_weight > 0 else 1024, 
-                                                                alpha=domain_weight)
-        predictor_input_size = 896 if orthogonal_loss_weight > 0 else 1024
-        self.cell_type_classifier = modules.CellTypeClassifier(input_size=896, hidden_size=512, num_classes=num_cell_types)
+            self.projector_pcm = modules.HSICProjector(d_x=768, d_y=256, proj_dim=128)
+            self.projector_he = modules.HSICProjector(d_x=768, d_y=256, proj_dim=128)
+        predictor_input_size = 768 if orthogonal_loss_weight > 0 else 1024
+        self.domain_discriminator = modules.DomainDiscriminator(predictor_input_size, alpha=domain_weight)
+        self.cell_type_classifier = modules.CellTypeClassifier(input_size=predictor_input_size, hidden_size=512, num_classes=num_cell_types)
         self.cell_type_criterion = nn.CrossEntropyLoss()
         if do_gmlp: # Use Gated MLP for prediction
             self.predictor = modules.PredictorGMLP(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
@@ -224,10 +223,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         x = self.feature_extractor(x_converted).last_hidden_state[:, 0, :].view(x.shape[0], -1)
         # x = self.translator(x)
         if self.make_ortho:
-            if if_convert:
-                x = self.feature_biology_translator_pcm(x)
-            else:
-                x = self.feature_biology_translator_he(x)
+            # if if_convert:
+            #     x = self.feature_biology_translator_pcm(x)
+            # else:
+            x = self.feature_biology_translator(x)
         x = self.predictor(x)
         x = torch.clamp(x, min=0)
         x = x / (torch.sum(x, dim=-1, keepdim=True)+1e-10) * 1e6
@@ -261,10 +260,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # if if_translate:
                 # x = self.translator(x)
             if if_ortho:
-                if if_convert:
-                    x = self.feature_biology_translator_pcm(x)
-                else:
-                    x = self.feature_biology_translator_he(x)
+                # if if_convert:
+                #     x = self.feature_biology_translator_pcm(x)
+                # else:
+                x = self.feature_biology_translator(x)
             return x
 
     def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
@@ -293,10 +292,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # if if_translate:
                 # x = self.translator(x)
             if if_ortho:
-                if if_convert:
-                    x = self.feature_biology_translator_pcm(x)
-                else:
-                    x = self.feature_biology_translator_he(x)
+                # if if_convert:
+                #     x = self.feature_biology_translator_pcm(x)
+                # else:
+                x = self.feature_biology_translator(x)
             x = self.predictor(x, return_gate=True)
             return x
 
@@ -326,10 +325,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # if if_translate:
                 # x = self.translator(x)
             if if_ortho:
-                if if_convert:
-                    x = self.feature_domain_translator_pcm(x)
-                else:
-                    x = self.feature_domain_translator_he(x)
+                # if if_convert:
+                #     x = self.feature_domain_translator_pcm(x)
+                # else:
+                x = self.feature_domain_translator(x)
             return x
 
     def _marker_margin_loss(self, pred_expr: torch.Tensor, cell_types: torch.Tensor,
@@ -425,11 +424,11 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # this part translates the features into a common space
         # he_translated = self.translator(he_features)
         # pcm_translated = self.translator(pcm_features)
-        if hasattr(self, "feature_biology_translator_he"):
-            he_translated_biology = self.feature_biology_translator_he(he_translated)
-            pcm_translated_biology = self.feature_biology_translator_pcm(pcm_translated)
-            he_translated_domain = self.feature_domain_translator_he(he_translated)
-            pcm_translated_domain = self.feature_domain_translator_pcm(pcm_translated)
+        if hasattr(self, "feature_biology_translator"):
+            he_translated_biology = self.feature_biology_translator(he_translated)
+            pcm_translated_biology = self.feature_biology_translator(pcm_translated)
+            he_translated_domain = self.feature_domain_translator(he_translated)
+            pcm_translated_domain = self.feature_domain_translator(pcm_translated)
             # loss to enforce orthogonality between biological and domain features
             pcm_bio_proj, pcm_domain_proj = self.projector_pcm(pcm_translated_biology, pcm_translated_domain)
             he_bio_proj, he_domain_proj = self.projector_he(he_translated_biology, he_translated_domain)
@@ -542,11 +541,11 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # Translator part
             # he_translated = self.translator(he_features)
             # pcm_translated = self.translator(pcm_features)
-            if hasattr(self, "feature_biology_translator_he"):
-                he_translated_biology = self.feature_biology_translator_he(he_translated)
-                pcm_translated_biology = self.feature_biology_translator_pcm(pcm_translated)
-                he_translated_domain = self.feature_domain_translator_he(he_translated)
-                pcm_translated_domain = self.feature_domain_translator_pcm(pcm_translated)
+            if hasattr(self, "feature_biology_translator"):
+                he_translated_biology = self.feature_biology_translator(he_translated)
+                pcm_translated_biology = self.feature_biology_translator(pcm_translated)
+                he_translated_domain = self.feature_domain_translator(he_translated)
+                pcm_translated_domain = self.feature_domain_translator(pcm_translated)
                 # loss to enforce orthogonality between biological and domain features
                 pcm_bio_proj, pcm_domain_proj = self.projector_pcm(pcm_translated_biology, pcm_translated_domain)
                 he_bio_proj, he_domain_proj = self.projector_he(he_translated_biology, he_translated_domain)
