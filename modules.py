@@ -76,13 +76,21 @@ class DomainDiscriminator(nn.Module):
 class OrthogonalTranslator(nn.Module):
     def __init__(self, feature_in=1024, feature_out=1024):
         super(OrthogonalTranslator, self).__init__()
-        self.fc1 = nn.Linear(feature_in, feature_out)
-        self.bn1 = nn.BatchNorm1d(feature_out)
-        self.fc2 = nn.Linear(feature_out, feature_out)
+        self.fc1 = nn.Linear(feature_in, 512)
+        self.ln1 = nn.LayerNorm(512)
+        self.fc2 = nn.Linear(512, 512)
+        self.ln2 = nn.LayerNorm(512)
+        self.fc3 = nn.Linear(512, feature_out)
+        self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
-        x = F.relu(self.bn1(self.fc1(x)))
-        return self.fc2(x)
+        x = self.fc1(x)
+        x = F.relu(self.ln1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        x = F.relu(self.ln2(x))
+        x = self.dropout(x)
+        return self.fc3(x)
 
 #! Prediction modules
 #! Predict the whole transcriptome from the image
