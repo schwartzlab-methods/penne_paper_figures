@@ -63,10 +63,7 @@ def prepare_data(data, labels):
     data_array = np.concatenate(data_L, axis=0)
     return data_array, label_array
 
-def main(path_1, path_label, save_dir, extractor_name, exp_name):
-
-    # original = np.load(path_1)
-    # cell_type = np.load(path_label)
+def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc):
     original, cell_type = prepare_data(path_1, path_label)
 
     print("Numpy files loaded")
@@ -80,7 +77,8 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
     cell_type_num = [cell_type_dict[cell] for cell in cell_type]
 
     # TMC
-    # tmc_plot(original,cell_type,save_dir)
+    if do_tmc:
+        tmc_plot(original,cell_type,save_dir)
 
     # pca
     pca = PCA(n_components=50)
@@ -91,14 +89,14 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name):
     var_ex_original = pca.explained_variance_ratio_
 
     # prep pandas for altair scatter
-    df_original = pd.DataFrame({f"PC 1 ({var_ex_original[0] * 100:.2f}%)": embedding_original[:, 0],
-                                f"PC 2 ({var_ex_original[1] * 100:.2f}%)": embedding_original[:, 1],
+    df_original = pd.DataFrame({f"PC 1 ({var_ex_original[0]:.2f})": embedding_original[:, 0],
+                                f"PC 2 ({var_ex_original[1]:.2f})": embedding_original[:, 1],
                                 "Classes": cell_type})
     
     # plot with altair
     scatter1 = alt.Chart(df_original).mark_point().encode(
-        x=f"PC 1 ({var_ex_original[0] * 100:.2f}%)",
-        y=f"PC 2 ({var_ex_original[1] * 100:.2f}%)",
+        x=f"PC 1 ({var_ex_original[0]:.2f})",
+        y=f"PC 2 ({var_ex_original[1]:.2f})",
         color="Classes",
     )
     scatter1.interactive().save(os.path.join(save_dir, f"feature_pca_{extractor_name}_{exp_name}_original.html"))
@@ -124,8 +122,9 @@ if __name__ == "__main__":
     argparser.add_argument("--save_dir", type=str, help="The directory to save the plot")
     argparser.add_argument("--path", type=str, nargs="+", help="Paths to feature extractor features")
     argparser.add_argument("--path_label", type=str, nargs="+", help="Paths or names to the labels")
+    argparser.add_argument("--do_tmc", action="store_true", help="Run TMC")
     argparser.add_argument("--extractor", type=str, help="name of the feature extractor")
     argparser.add_argument("--exp_name", type=str, help="name of the experiment")
     args = argparser.parse_args()
-    main(args.path, args.path_label, args.save_dir, args.extractor, args.exp_name)
+    main(args.path, args.path_label, args.save_dir, args.extractor, args.exp_name, args.do_tmc)
 
