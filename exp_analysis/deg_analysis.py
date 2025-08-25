@@ -18,7 +18,10 @@ def main():
     parser.add_argument('--counts', type=str, required=True, nargs="+", help='Path to the counts matrix npy file')
     parser.add_argument('--labels', type=str, required=True, nargs="+", help='Path to the labels npy file')
     parser.add_argument('--genes', type=str, required=True, help='Path to the gene names npy file')
-    parser.add_argument('--cell_types', type=str, required=True, nargs="+", help='The two cell types to compare')
+    parser.add_argument('--cell_types', type=str, required=True, nargs="+", 
+                        help='The two cell types to compare. Use to select from the dataset.')
+    parser.add_argument('--comparison', type=str, nargs="+", default=None,
+                        help='The comparison type (e.g. "control" or "treatment"). This is used to query the gmt. If none, will use cell_types')
     parser.add_argument('--output', type=str, required=True, help='Output directory for results')
     parser.add_argument('--gt', type=str, default=None, help='Path to the ground truth RNA seq .gct file (optional)')
     parser.add_argument('--gene_template', type=str, default=None, help='Path to the tsv file for mapping gene symbols tp gene names (optinal)')
@@ -26,7 +29,13 @@ def main():
     if not os.path.exists(args.output):
         os.makedirs(args.output)
 
-    args.cell_types.sort() #sort as the alphabetical first is the reference in linear modeling
+    if args.comparison:
+        # Use the comparison argument to filter the dataset
+        # sort alphabetically by comparison, but ensure that the relative order does not change
+        dict_cell_type_to_comp_group = {args.cell_types[0]: args.comparison[0], args.cell_types[1]: args.comparison[1]}
+        comparison = sorted(args.comparison)
+    else:
+        comparison = sorted(args.cell_types)
     # Load count data (rows: cells, columns: gemes)
     count_L = []
     for each in args.counts:
@@ -39,7 +48,7 @@ def main():
     cell_types = np.concatenate(cell_L).ravel()
     # cell_types = np.load(args.labels)
     gene_names = np.load(args.genes)
-    assert counts.shape[0] == cell_types.shape[0], "Counts and labels must have the same number of cells"
+    assert counts.shape[0] == cell_types.shape[0], f"Counts and labels must have the same number of cells. Got {counts.shape[0]} and {cell_types.shape[0]}"
     assert counts.shape[1] == gene_names.shape[0], "Counts and gene names must match in number of genes"
     assert len(args.cell_types) == 2, "Please provide exactly two cell types for comparison"
     for each in args.cell_types:
@@ -59,19 +68,20 @@ def main():
             gt_data.index = [name_to_symbol[name] if name in name_to_symbol.keys() else name for name in gt_data.index]  # map gene names to symbols
 
         # check if the ground truth data has the two cell types
-        if not all(cell.lower() in gt_data.columns for cell in args.cell_types):
-            print(f"Ground truth data does not contain the specified cell types: {args.cell_types}.")
+        if not all(cell.lower() in gt_data.columns for cell in comparison):
+            print(f"Ground truth data does not contain the specified comparison: {comparison}.")
             print("Will proceed without ground truth data.")
         else:
-            print(f"Process GT data for {args.cell_types}.")
+            print(f"Process GT data for {comparison}.")
             # process the ground truth data
             # filter to only have the two cell types
-            gt_data = gt_data.loc[:, [cell.lower() for cell in args.cell_types]]
+            gt_data = gt_data.loc[:, [cell.lower() for cell in comparison]]
             # select only the genes that are in the intersection of gt and gene_names
             common_genes = list(set(gt_data.index).intersection(set(gene_names)))
             # filter the gene names
-            # filter out this one gene because it got mapped twice for some reasons
-            gene_names = [gene if ((gene in common_genes) and (gene != "CYB561D2")) else None for gene in gene_names]
+            # find duplicated genes
+            duplicated_genes = gt_data.index[gt_data.index.duplicated()].tolist()
+            gene_names = [gene if ((gene in common_genes) and (gene not in duplicated_genes)) else None for gene in gene_names]
             order = [gene for gene in gene_names if gene in common_genes]
             gt_data = gt_data.loc[order, :]  # filter to only have the common genes
             # sort the ground truth data by gene names
@@ -81,15 +91,6 @@ def main():
             gt_data = np.log2(gt_data + 1)
             l2fc_gt = (gt_data[args.cell_types[1].lower()] - gt_data[args.cell_types[0].lower()]).to_numpy()
             print("GT processed, running DGE on data")
-
-    # # revert the log2 transform in the prediction
-    # counts = np.clip(counts, 0, None)
-    # counts = 2**counts - 1
-
-    # # normalize to counts per million
-    # counts = counts / np.sum(counts, axis=1, keepdims=True) * 1e6
-    # # log2 transform
-    # counts = np.log2(counts + 1)
     
     # get only the cell types of interest from counts
     cell_type_mask = np.isin(cell_types, args.cell_types)
@@ -117,7 +118,10 @@ def main():
         if args.gt:
             l2fc_gt_L.append(l2fc_gt[i])
         i += 1
-        gene_df['cell_type'] = cell_types
+        if args.comparison:
+            gene_df['cell_type'] = [dict_cell_type_to_comp_group[cell_type] for cell_type in cell_types]
+        else:
+            gene_df['cell_type'] = comparison
 
         # Create the design matrix
         X = sm.add_constant(pd.get_dummies(gene_df['cell_type'], drop_first=True)).astype(float)
@@ -127,14 +131,15 @@ def main():
             y = y.mean(axis=1)
         # Fit a linear model
         model = sm.OLS(y, X, missing="drop")
-        results.append(model.fit())
+        results.append(model.fit(cov_type='HC3'))
 
     # Extract p-values and coefficients
     p_values = [result.pvalues.iloc[1] for result in results]
     coefficients = [result.params.iloc[1] for result in results]
+    t_stats = [result.tvalues.iloc[1] for result in results]
     print("Final number of genes analyzed: ", len(new_gene_names))
     if len(new_gene_names) == 0:
-        print("No news with sufficient expressions found. Program ends.")
+        print("No genes with sufficient expressions found. Program ends.")
         return 0
     # Create a DataFrame for the results
     if args.gt is not None:
@@ -144,15 +149,14 @@ def main():
             'p_value': p_values,
             'log_fc': coefficients,
             'log_fc_gt': l2fc_gt_L,
-            # "correct_dir": ["Same" if (np.sign(coeff) == np.sign(gt)) and 
-            #                 else "Different" 
-            #                 for coeff, gt in zip(coefficients, l2fc_gt_L)]
+            't_stat': t_stats,
         })
     else:
         results_df = pd.DataFrame({
             'gene': new_gene_names,
             'p_value': p_values,
-            'log_fc': coefficients
+            'log_fc': coefficients,
+            't_stat': t_stats
         })
     # Adjust p-values for multiple testing
     results_df['adj_p_value'] = sm.stats.multipletests(results_df['p_value'], method='fdr_bh')[1]
@@ -164,7 +168,7 @@ def main():
                                                      else "Different_nonsignificant", axis=1)
 
     # Save results
-    results_df.to_csv(os.path.join(args.output, f'deg_ref_{args.cell_types[0]}vs{args.cell_types[1]}.csv'), index=False)
+    results_df.to_csv(os.path.join(args.output, f'deg_ref_{comparison[0]}vs{comparison[1]}.csv'), index=False)
     # Plot results
     plt.figure(figsize=(10, 6))
     sns.scatterplot(data=results_df, x='log_fc', y=-np.log10(results_df['adj_p_value']), 
@@ -172,10 +176,10 @@ def main():
     plt.axhline(y=-np.log10(0.05), color='r', linestyle='--')
     plt.axvline(x=1, color='r', linestyle='--')
     plt.axvline(x=-1, color='r', linestyle='--')
-    plt.title(f'Differential Gene Expression Analysis: {args.cell_types[0]}(Reference) vs {args.cell_types[1]}')
+    plt.title(f'Differential Gene Expression Analysis: {comparison[0]}(Reference) vs {comparison[1]}')
     plt.xlabel('Log2 FC')
     plt.ylabel('-log10(FDR Adjusted p-value)')
-    plt.savefig(os.path.join(args.output, f'deg_plot_ref_{args.cell_types[0]}vs{args.cell_types[1]}.png'))
+    plt.savefig(os.path.join(args.output, f'deg_plot_ref_{comparison[0]}vs{comparison[1]}.png'))
     plt.close()
     # get a list of differentially expressed genes
     deg_genes_up = results_df[results_df['adj_p_value'] < 0.05]
@@ -184,10 +188,10 @@ def main():
     deg_genes_down = deg_genes_down[deg_genes_down['log_fc'] < -1]['gene'].tolist()
 
     # save the list of differentially expressed genes
-    with open(os.path.join(args.output, f'deg_genes_ref_{args.cell_types[0]}vs{args.cell_types[1]}_up.txt'), 'w') as f:
+    with open(os.path.join(args.output, f'deg_genes_ref_{comparison[0]}vs{comparison[1]}_up.txt'), 'w') as f:
         for gene in deg_genes_up:
             f.write(f"{gene}\n")
-    with open(os.path.join(args.output, f'deg_genes_ref_{args.cell_types[0]}vs{args.cell_types[1]}_down.txt'), 'w') as f:
+    with open(os.path.join(args.output, f'deg_genes_ref_{comparison[0]}vs{comparison[1]}_down.txt'), 'w') as f:
         for gene in deg_genes_down:
             f.write(f"{gene}\n")
     print(f"DEG analysis completed. Results saved to {args.output}")
@@ -195,10 +199,10 @@ def main():
         # create a bar plot of the correct direction of the log2 fold change
         plt.figure(figsize=(10, 6))
         sns.countplot(data=results_df, x='correct_dir', order=["Same_significant", "Same_nonsignificant", "Different_significant", "Different_nonsignificant"])
-        plt.title(f'Correct Direction of Log2 FC: {args.cell_types[0]} vs {args.cell_types[1]}')
+        plt.title(f'Correct Direction of Log2 FC: {comparison[0]} vs {comparison[1]}')
         plt.xlabel('Correct Direction')
         plt.ylabel('Count')
-        plt.savefig(os.path.join(args.output, f'correct_direction_ref_{args.cell_types[0]}vs{args.cell_types[1]}.png'))
+        plt.savefig(os.path.join(args.output, f'correct_direction_ref_{comparison[0]}vs{comparison[1]}.png'))
         plt.close()
 
 if __name__ == "__main__":
