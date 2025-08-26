@@ -17,6 +17,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  cell_type_weight=0.0,
                  marker_gene_weight=0.0,
                  orthogonal_loss_weight=0.0,
+                 cosine_weight = 2.0,
                  lr=1e-3,
                  do_gmlp=True, across_cell=False):
         '''Gene expression prediction model for Visium HD data.
@@ -100,6 +101,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.second_stage_training = True if up_marker_genes else False
         self.make_ortho = orthogonal_loss_weight > 0
         self.across_cell = across_cell
+        self.cosine_weight = cosine_weight
         # loss functions
         self.criterion = nn.HuberLoss() #MSE + MAE for sparse data
         self.cosine_similarity = nn.CosineEmbeddingLoss()
@@ -497,14 +499,14 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             marker_gene_loss = self._marker_margin_loss(pred_exp_pcm, cell_type, self.up_marker_genes_dict, across_cell=self.across_cell)
 
             # total loss for training
-            total_loss = prediction_loss + cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss + self.marker_gene_weight *  marker_gene_loss
+            total_loss = prediction_loss + self.cosine_weight * cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss + self.marker_gene_weight *  marker_gene_loss
             metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item(),
                         "train_coral_loss": coral_loss.item(), "train_cosine_loss": cosine_pred_loss.item(),
                         "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item(), 
                         "train_marker_gene_loss": marker_gene_loss}
         else:
             # total loss for training
-            total_loss = prediction_loss + cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss
+            total_loss = prediction_loss + self.cosine_weight * cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss
             metrics = {"train_loss": total_loss.item(), "train_discriminator_loss": domain_loss.item(),
                         "train_coral_loss": coral_loss.item(), "train_cosine_loss": cosine_pred_loss.item(),
                         "train_prediction_loss": prediction_loss.item(), "train_cell_type_loss": cell_type_loss.item()}
@@ -606,15 +608,15 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 marker_gene_loss = self._marker_margin_loss(pred_exp_pcm, cell_type, self.up_marker_genes_dict, across_cell=self.across_cell)
 
                 # total loss for validation
-                total_loss = prediction_loss + cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss + self.marker_gene_weight * marker_gene_loss
+                total_loss = prediction_loss + self.cosine_weight * cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss + self.marker_gene_weight * marker_gene_loss
                 metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item(),
-                           "val_coral_loss": coral_loss.item(), "train_cosine_loss": cosine_pred_loss.item(),
+                           "val_coral_loss": coral_loss.item(), "val_cosine_loss": cosine_pred_loss.item(),
                             "val_prediction_loss": prediction_loss.item(), "val_cell_type_loss": cell_type_loss.item(),
                             "val_marker_gene_loss": marker_gene_loss}
             else:
                 # total loss for validation
-                total_loss = prediction_loss + cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss
-                metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item(), "train_cosine_loss": cosine_pred_loss.item(),
+                total_loss = prediction_loss + self.cosine_weight * cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss
+                metrics = {"val_loss": total_loss.item(), "val_discriminator_loss": domain_loss.item(), "val_cosine_loss": cosine_pred_loss.item(),
                             "val_coral_loss": coral_loss.item(), "val_prediction_loss": prediction_loss.item(), "val_cell_type_loss": cell_type_loss.item()}
             if self.make_ortho:
                 total_loss += (ortho_loss + domain_separation_loss)
