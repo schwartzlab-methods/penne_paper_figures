@@ -36,10 +36,15 @@ def process(args: list) -> None:
     y = position_matrix.loc[position_matrix.barcode == each_barcode, 'pxl_row_in_fullres'].values[0]
     mtx = cell_matrix[cell_matrix.obs_names == each_barcode].X
     # check if save is needed
+    if isinstance(x, str) or isinstance(y, str):
+        try:
+            x = int(x)
+            y = int(y)
+        except ValueError:
+            return None  # Skip if conversion fails
     if x < 112 or y < 112 or x + 112 > img_width or y + 112 > img_height:
         return None  # Skip if the patch is out of bounds
     if mtx.shape[0] == 0:
-        print(mtx.shape)
         return None  # Skip if there are no barcode found
     if mtx.sum() == 0:
         return None  # Skip if there are no expression values found
@@ -114,7 +119,7 @@ def main(all_dir: str, output: str, common_genes: str) -> None:
     print("Common genes number: ", len(common_genes_list))
     # filter the cell matrices to only contain common genes
     for i in range(len(cell_mtx_list)):
-        cell_mtx_list[i].X = cell_mtx_list[i].X.todense() if isinstance(cell_mtx_list[i].X, csr_matrix) else cell_mtx_list[i].X
+        cell_mtx_list[i].X = np.array(cell_mtx_list[i].X.todense()) if isinstance(cell_mtx_list[i].X, csr_matrix) else np.array(cell_mtx_list[i].X)
         cell_mtx_list[i] = cell_mtx_list[i][:,cell_mtx_list[i].var_names.isin(common_genes_list)].copy()
         # sort according to the common genes
         cell_mtx_list[i] = cell_mtx_list[i][:,cell_mtx_list[i].var_names.sort_values()].copy()
@@ -129,7 +134,6 @@ def main(all_dir: str, output: str, common_genes: str) -> None:
             futures.append((img_path, pos_mtx_list[i], cell_mtx_list[i], name, each_barcode, output))
     print(f"Start with {os.cpu_count()} workers")
     num_workers = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count()))
-    # with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
     with get_context("spawn").Pool(processes=num_workers) as pool:
         list(tqdm(pool.imap_unordered(process, futures), total=total_tasks, desc="Processing samples"))
     print("All images have been processed")
