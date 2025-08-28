@@ -20,8 +20,8 @@ def parse_gt_files(files:list[str]) -> pd.DataFrame:
     '''
     gt_data = []
     for f in files:
-        exp_name = os.path.basename(f).replace('_gene_counts__gene_symbols.txt', '')
-        df = pd.read_csv(f, sep='\t', header=1, names=[exp_name,"gene_symbol"])
+        exp_name = str(os.path.basename(f)).replace('_gene_counts_gene_symbols.txt', '')
+        df = pd.read_csv(f, sep='\t', header=0, names=[exp_name,"gene_symbol"])
         # make it such that gene symbols are row
         df = df.set_index("gene_symbol").T
         # normalize to 1e6 then log2 + 1
@@ -39,52 +39,105 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
+    rng = np.random.default_rng()
 
     gt_files = [os.path.join(args.ground_truth, f) 
                 for f in os.listdir(args.ground_truth) if f.endswith('_gene_symbols.txt')]
     
+    gene_symbols_list = np.load(args.gene_list, allow_pickle=True).reshape(-1)
     pred = np.load(args.pred_npy) # shape (samples, num_genes), order of genes is in the gene_symbols_list
     exp_label = np.load(args.exp_label, allow_pickle=True).reshape(-1) # shape (samples,)
-    gene_symbols_list = np.load(args.gene_list, allow_pickle=True).reshape(-1)
-
+    # average over the pred with the same experiment label
+    pred = pd.DataFrame(pred, columns=gene_symbols_list, index=exp_label).groupby(exp_label).mean()
+    labels = pred.index.values
+    pred = pred.values
     gt_data_df = parse_gt_files(gt_files) # row: samples, columns: genes
 
     # reorder such that the experiment orders are the same on rows as exp_label
-    gt_data_df = gt_data_df.reindex(exp_label)
+    gt_data_df = gt_data_df.reindex(labels)
 
+    # z-score normalized pred and actual
+    pred = (pred - np.mean(pred, axis=0)) / np.std(pred, axis=0) if np.std(pred, axis=0).all() > 0 else pred
+    gt_data_df = (gt_data_df - np.mean(gt_data_df, axis=0)) / np.std(gt_data_df, axis=0) if np.std(gt_data_df, axis=0).all() > 0 else gt_data_df
     # Validate the gene expression correlation
     corr_genes = []
     corr_val_genes = []
+    non_zero_pred_genes = []
+    non_zero_corr = []
     for gene in gene_symbols_list:
         if gene in gt_data_df.columns:
             # Compute correlation
-            pred_values = pred[:, gene_symbols_list == gene].flatten()
-            exp_values = gt_data_df[gene].values
-            correlation = np.corrcoef(pred_values, exp_values)[0, 1]
-            corr_genes.append(gene)
-            corr_val_genes.append(correlation)
+            # due to small sample sizes, we will add a random small number to each to avoid nan
+            pred_values = pred[:, gene_symbols_list == gene].flatten()# + np.abs(rng.normal(0, 1e-6, pred[:, gene_symbols_list == gene].flatten().shape))
+            exp_values = gt_data_df[gene].values# + np.abs(rng.normal(0, 1e-6, gt_data_df[gene].values.shape))
+            # Z-score normalization
+            if np.sum(pred_values) == 0 and np.sum(exp_values) == 0:
+                correlation = 1.0
+            elif np.sum(pred_values) == 0 or np.sum(exp_values) == 0:
+                correlation = 0.0
+            else:
+                correlation = np.corrcoef(pred_values, exp_values)[0, 1]
+                non_zero_pred_genes.append(gene)
+                non_zero_corr.append(correlation)
 
+            # if correlation is nan, print exp_val and pre_val
+            corr_genes.append(str(gene))
+            corr_val_genes.append(correlation)
+    df_non_zero_pred = pd.DataFrame({"Gene": non_zero_pred_genes, "Correlation": non_zero_corr})
+    df_non_zero_pred.to_csv(os.path.join(args.output, "gene_correlation_non_zero.csv"), index=False)
+    print("Mean of non-zero correlations:", df_non_zero_pred["Correlation"].mean())
+    
     # Validate sample correlation
     samples = []
     corr_val_samples = []
     # filter such that both pred and exp only contains corr_genes
     pred_filtered = pred[:, np.isin(gene_symbols_list, corr_genes)]
-    gt_data_df_filtered = gt_data_df[:, corr_genes].reindex(columns=corr_genes)
-    for i, sample in enumerate(gt_data_df.columns):
+    gt_data_df_filtered = gt_data_df.loc[:, corr_genes].reindex(columns=corr_genes)
+    for i, sample in enumerate(gt_data_df_filtered.index):
         pred_values = pred_filtered[i, :].flatten()
-        exp_values = gt_data_df_filtered[i, :].values.flatten()
+        exp_values = gt_data_df_filtered.iloc[i, :].values.flatten()
         correlation = np.corrcoef(pred_values, exp_values)[0, 1]
         corr_val_samples.append(correlation)
         samples.append(sample)
-    
+
+    corr_val_samples_non_zero = []
+    pred_filtered_non_zero = pred[:, np.isin(gene_symbols_list, non_zero_pred_genes)]
+    gt_data_df_filtered_non_zero = gt_data_df.loc[:, non_zero_pred_genes].reindex(columns=non_zero_pred_genes)
+    for i, sample in enumerate(gt_data_df_filtered_non_zero.index):
+        pred_values = pred_filtered_non_zero[i, :].flatten()
+        exp_values = gt_data_df_filtered_non_zero.iloc[i, :].values.flatten()
+        correlation = np.corrcoef(pred_values, exp_values)[0, 1]
+        corr_val_samples_non_zero.append(correlation)
+
     # plot correlation violin plots for both
     plt.figure(figsize=(12, 6))
-    sns.violinplot(data=[corr_val_genes, corr_val_samples], inner="quartile")
-    plt.xticks([0, 1], ['Gene Correlations', 'Sample Correlations'])
+    sns.violinplot(data=[corr_val_genes, corr_val_samples, corr_val_samples_non_zero], inner="quartile")
+    plt.xticks([0, 1, 2], ['Gene Correlations', 'Sample All Gene Correlations', 'Sample Non-Zero Gene Correlations'])
     plt.title('Violin Plot of Correlation Coefficients')
     plt.ylabel('Correlation Coefficient')
-    plt.savefig(args.output, "correlation_violin_plot")
+    plt.savefig(os.path.join(args.output, "correlation_violin_plot.png"))
     plt.close()
+
+    # Save correlation results
+    df_gene_cor = pd.DataFrame({"Gene": corr_genes, "Correlation": corr_val_genes})
+    df_gene_cor.to_csv(os.path.join(args.output, "gene_correlation_results.csv"), index=False)
+
+    # write gene correlation > 0.3 to a txt
+    with open(os.path.join(args.output, "gene_correlation_greater_0.3.txt"), "w") as f:
+        for gene, corr in zip(corr_genes, corr_val_genes):
+            if corr > 0.3:
+                f.write(f"{gene}\n")
+    
+    # write the top 200 genes to a txt
+    df_gene_cor = df_gene_cor.sort_values(by="Correlation", ascending=False).head(200)
+    with open(os.path.join(args.output, "gene_correlation_top_200.txt"), "w") as f:
+        for gene in df_gene_cor["Gene"]:
+            f.write(f"{gene}\n")
+
+    df_sample_cor = pd.DataFrame({"Sample": samples, 
+                                 "Correlation all genes": corr_val_samples,
+                                 "Correlation non-zero genes": corr_val_samples_non_zero})
+    df_sample_cor.to_csv(os.path.join(args.output, "sample_correlation_results.csv"), index=False)
 
 if __name__ == "__main__":
     main()
