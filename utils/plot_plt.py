@@ -3,6 +3,7 @@ Generate some plots using plt
 '''
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 import os
 import argparse
 
@@ -34,6 +35,30 @@ def plot_sbs_histogram(file_dirs, exp_name, output_dir):
     plt.savefig(os.path.join(output_dir, f"{exp_name}_side_by_side_his.png"))
     plt.close()
 
+def plot_loss(csv, exp_name, output_dir):
+    df = pd.DataFrame()
+    for each in csv:
+        current_df = pd.read_csv(each)
+        # increase the epoch number by a constant amount, based on the previous largest epoch
+        if not df.empty:
+            current_df['epoch'] += df['epoch'].max() + 1
+        # average by epoch
+        current_df = current_df.groupby('epoch').mean().reset_index()
+        df = pd.concat([df, current_df], ignore_index=True)
+    # plot by type of loss. Each loss has a pre fix (train_ or val_), followed by the loss name
+    # group train and val of the same type of loss toghter, save plots sperately
+    loss_types = set([col.split('_', 1)[1] for col in df.columns if col not in ['epoch', 'step']])
+    for loss_type in loss_types:
+        plt.figure()
+        plt.plot(df['epoch'], df[f'train_{loss_type}'], label=f'train_{loss_type}')
+        plt.plot(df['epoch'], df[f'val_{loss_type}'], label=f'val_{loss_type}')
+        plt.title(f"{exp_name} - {loss_type}")
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.savefig(os.path.join(output_dir, f"{exp_name}_{loss_type}.png"))
+        plt.close()
+
 def plot_bar(file_dirs, exp_name, output_dir):
     for idx, each in enumerate(file_dirs):
         data = np.load(each)
@@ -62,6 +87,8 @@ def main():
         plot_sbs_histogram(args.file_dirs, args.exp_name, args.output_dir)
     elif args.type == "bar":
         plot_bar(args.file_dirs, args.exp_name, args.output_dir)
+    elif args.type == "loss":
+        plot_loss(args.file_dirs, args.exp_name, args.output_dir)
 
 if __name__ == '__main__':
     main()
