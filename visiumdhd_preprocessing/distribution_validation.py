@@ -24,13 +24,6 @@ def plot_distribution(data, labels, save_dir, exp_name):
     - exp_name: name of the experiment for saving the plot
     """
 
-    # undo the predicted log2 transformation
-    data = np.power(2, data) - 1 
-
-    # normalize to 10e6 and log2 transform the data
-    data = data / np.sum(data, axis=1, keepdims=True) * 1e6
-    data = np.log2(data + 1)
-
     cdf_dic = {}
     print("Calculating CDF data...")
     for i, label in enumerate(tqdm(labels)):
