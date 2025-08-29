@@ -37,9 +37,11 @@ def plot_umap(data, labels, save_dir, exp_name, extractor,
     plt.savefig(os.path.join(save_dir, f"umap_{exp_name}_{n_neighbors}_{extractor}.png"))
     plt.close()
 
-def tmc_plot(data, labels, save_dir):
+def tmc_plot(data, labels, save_dir, use_neg_modularity=False):
     adata = ad.AnnData(X=data, obs=pd.DataFrame({"cell_type": labels.tolist()}))
     tmc_obj = tmc(adata, os.path.join(save_dir, "tmc_output"))
+    if use_neg_modularity:
+        tmc_obj.eps = -100 # set the modularity to be negative
     tmc_obj.run_spectral_clustering()
     tmc_obj.store_outputs(
         cell_ann_col="cell_type",
@@ -63,7 +65,7 @@ def prepare_data(data, labels):
     data_array = np.concatenate(data_L, axis=0)
     return data_array, label_array
 
-def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc):
+def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc, do_negative_modularity):
     original, cell_type = prepare_data(path_1, path_label)
 
     print("Numpy files loaded")
@@ -78,7 +80,7 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc):
 
     # TMC
     if do_tmc:
-        tmc_plot(original,cell_type,save_dir)
+        tmc_plot(original,cell_type,save_dir,do_negative_modularity)
 
     # pca
     pca = PCA(n_components=50)
@@ -123,8 +125,9 @@ if __name__ == "__main__":
     argparser.add_argument("--path", type=str, nargs="+", help="Paths to feature extractor features")
     argparser.add_argument("--path_label", type=str, nargs="+", help="Paths or names to the labels")
     argparser.add_argument("--do_tmc", action="store_true", help="Run TMC")
+    argparser.add_argument("--do_negative_modularity", action="store_true", help="Run TMC with negative modularity")
     argparser.add_argument("--extractor", type=str, help="name of the feature extractor")
     argparser.add_argument("--exp_name", type=str, help="name of the experiment")
     args = argparser.parse_args()
-    main(args.path, args.path_label, args.save_dir, args.extractor, args.exp_name, args.do_tmc)
+    main(args.path, args.path_label, args.save_dir, args.extractor, args.exp_name, args.do_tmc, args.do_negative_modularity)
 
