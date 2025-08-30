@@ -34,6 +34,9 @@ def plot_umap(data, labels, save_dir, exp_name, extractor,
     handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=class_to_color[cls], markersize=10, label=cls)
            for cls in unique_classes]
     plt.legend(handles=handles, title="Classes")
+    # x and y labels
+    plt.xlabel("UMAP 1")
+    plt.ylabel("UMAP 2")
     plt.savefig(os.path.join(save_dir, f"umap_{exp_name}_{n_neighbors}_{extractor}.png"))
     plt.close()
 
@@ -41,7 +44,7 @@ def tmc_plot(data, labels, save_dir, use_neg_modularity=False):
     adata = ad.AnnData(X=data, obs=pd.DataFrame({"cell_type": labels.tolist()}))
     tmc_obj = tmc(adata, os.path.join(save_dir, "tmc_output"))
     if use_neg_modularity:
-        tmc_obj.eps = -100 # set the modularity to be negative
+        tmc_obj.eps = -10000 # set the modularity to be negative
     tmc_obj.run_spectral_clustering()
     tmc_obj.store_outputs(
         cell_ann_col="cell_type",
@@ -55,6 +58,7 @@ def prepare_data(data, labels):
     data_L = []
     for i, each in enumerate(data):
         features = np.load(each)
+        features = features.reshape(features.shape[0], -1)
         data_L.append(features)
         if os.path.isfile(labels[i]):
             label_L.append(np.load(labels[i]))
@@ -109,9 +113,11 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc, do_nega
     ax.set_title(extractor_name)
     handles, labels = scatter1.legend_elements()
     ax.legend(handles, np.unique(cell_type), title="Class", loc='center left', bbox_to_anchor=(1.04, 0.5))
+    ax.set_xlabel(f"PC 1 (Variance explained: {var_ex_original[0]:.2f})")
+    ax.set_ylabel(f"PC 2 (Variance explained: {var_ex_original[1]:.2f})")
     final_save_dir = os.path.join(save_dir, f"feature_pca_{extractor_name}_{exp_name}.png")
     plt.savefig(final_save_dir, bbox_inches="tight")
-    plt.close
+    plt.close()
 
     # plot umap with plt
     if extractor_name == "phikon-v2":
