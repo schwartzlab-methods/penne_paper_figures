@@ -206,7 +206,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         hsic = (Kc * Lc).sum() / ((B - 1) ** 2)
         return hsic
     
-    def forward(self, x: torch.Tensor, if_convert: bool=False) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, if_convert: bool=False, if_normalize=True) -> torch.Tensor:
         '''Forward pass for the model.
 
         Args:
@@ -232,8 +232,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             x = self.feature_translator(x)[:, :768]
         x = self.predictor(x)
         x = torch.clamp(x, min=0)
-        x = x / (torch.sum(x, dim=-1, keepdim=True)+1e-10) * 1e6
-        x = torch.log2(x + 1)
+        if if_normalize:
+            x = x / (torch.sum(x, dim=-1, keepdim=True)+1e-10) * 1e6
+            x = torch.log2(x + 1)
         return x
     
     def compute_feature(self, x: torch.Tensor, if_convert: bool=False, 
