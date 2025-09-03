@@ -72,6 +72,7 @@ def train(train_loader, val_loader,
         num_genes: int, the number of genes in the dataset to predict
         num_cell_types: int, the number of cell types in the dataset
         up_marker_genes: str, the path to the upregulated marker genes file
+        if_ablation: bool, whether to perform ablation by removing some marker genes, default False
         gene_names: str, the path to the gene names file
         pcm_cell_to_idx: dict, mapping from cell type names to their indices
         celltypes: list, the list of cell types in the dataset
@@ -119,7 +120,7 @@ def train(train_loader, val_loader,
             for celltype in enriched_gene_sets_name.keys():
                 if len(enriched_gene_sets_name[celltype]) > 5:
                     genes_to_remove = random.sample(enriched_gene_sets_name[celltype], 5)
-                    txt_to_write = f"{pcm_cell_to_idx_lower_rev[celltype]}\tcell line" + "\t".join(genes_to_remove)
+                    txt_to_write = f"{pcm_cell_to_idx_lower_rev[celltype]}\tcell line\t" + "\t".join(genes_to_remove)
                     ablation_genes.append(txt_to_write)
                     enriched_gene_sets_name[celltype] = list(set(enriched_gene_sets_name[celltype]) - set(genes_to_remove))
             with open(os.path.join(final_save_dir, "ablation_genes.gmt"), "w") as f:
