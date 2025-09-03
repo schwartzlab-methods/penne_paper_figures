@@ -1,5 +1,5 @@
 import os
-from random import random
+import random
 import torch
 from torch.utils.data import random_split, DataLoader, ConcatDataset
 import pytorch_lightning as pl
