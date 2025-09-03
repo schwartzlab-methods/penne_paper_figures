@@ -1,4 +1,5 @@
 import os
+from random import random
 import torch
 from torch.utils.data import random_split, DataLoader, ConcatDataset
 import pytorch_lightning as pl
@@ -53,6 +54,7 @@ def train(train_loader, val_loader,
           num_cell_types=0, 
           end_to_end=False,
           up_marker_genes=None,
+          if_ablation=False,
           gene_names=None,
           pcm_cell_to_idx=None,
           celltypes=None,
@@ -111,6 +113,17 @@ def train(train_loader, val_loader,
         enriched_gene_sets_name = {
             pcm_cell_to_idx_lower[celltype]: signature[celltype].dropna().tolist() for celltype in celltype_of_interest if celltype in signature.columns
         }
+        if if_ablation: # randomly select 5 marker genes for each cell type to remove
+            ablation_genes = []
+            pcm_cell_to_idx_lower_rev = {v: k for k, v in pcm_cell_to_idx_lower.items()}
+            for celltype in enriched_gene_sets_name.keys():
+                if len(enriched_gene_sets_name[celltype]) > 5:
+                    genes_to_remove = random.sample(enriched_gene_sets_name[celltype], 5)
+                    txt_to_write = f"{pcm_cell_to_idx_lower_rev[celltype]}\tcell line" + "\t".join(genes_to_remove)
+                    ablation_genes.append(txt_to_write)
+                    enriched_gene_sets_name[celltype] = list(set(enriched_gene_sets_name[celltype]) - set(genes_to_remove))
+            with open(os.path.join(final_save_dir, "ablation_genes.gmt"), "w") as f:
+                f.writelines("\n".join(ablation_genes))
         # convert to a list of indices
         enriched_gene_sets = {
             celltype: [1 if gene in enriched_genes else 0 for gene in feature_names]
@@ -186,6 +199,10 @@ def main():
                             help='If set, the marker gene loss will be calculated across all cells. If not set, the marker gene loss will be calculated within each cell type.')
     parser.add_argument('--orthogonal_weight', type=float, default=0, help='Weight for the orthogonal loss')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
+    parser.add_argument('--ablation_mode', action='store_true', 
+                        help='If set, the model will be trained with ablation with removed marker genes')
+    parser.add_argument('--feature_extractor', type=str, default="phikon-2", 
+                        help='Feature extractor model to use') #! todo - implement other feature extractors
     args = parser.parse_args()
     print("Starting the training script with the following arguments:")
     print(args)
@@ -215,6 +232,7 @@ def main():
           num_cell_types=dataset.datasets[0].num_pcm_classes,
           end_to_end=args.end_to_end,
           up_marker_genes=args.up_marker_genes,
+          if_ablation=args.ablation_mode,
           gene_names=args.gene_names,
           pcm_cell_to_idx=dataset.datasets[0].livecell_class_to_idx,
           celltypes=dataset.datasets[0].livecell_class_to_idx.keys(),
