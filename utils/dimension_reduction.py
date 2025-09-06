@@ -44,7 +44,7 @@ def tmc_plot(data, labels, save_dir, use_neg_modularity=False):
     adata = ad.AnnData(X=data, obs=pd.DataFrame({"cell_type": labels.tolist()}))
     tmc_obj = tmc(adata, os.path.join(save_dir, "tmc_output"))
     if use_neg_modularity:
-        tmc_obj.eps = -10000 # set the modularity to be negative
+        tmc_obj.eps = -1e10 # set the modularity to be negative
     tmc_obj.run_spectral_clustering()
     tmc_obj.store_outputs(
         cell_ann_col="cell_type",
@@ -108,7 +108,7 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc, do_nega
     scatter1.interactive().save(os.path.join(save_dir, f"feature_pca_{extractor_name}_{exp_name}_original.html"))
     
     # plot with plt
-    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     scatter1 = ax.scatter(embedding_original[:, 0], embedding_original[:, 1], c=cell_type_num, cmap='tab10', s=0.1)
     ax.set_title(extractor_name)
     handles, labels = scatter1.legend_elements()
