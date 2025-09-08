@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.preprocessing import QuantileTransformer
 import argparse
 
 def parse_gt_files(files:list[str]) -> pd.DataFrame:
@@ -28,6 +29,42 @@ def parse_gt_files(files:list[str]) -> pd.DataFrame:
         df = np.log2((df / df.sum(axis=1).values[0]) * 1e6 + 1)
         gt_data.append(df)
     return pd.concat(gt_data)
+
+def compute_stats_gt(gt_df: pd.DataFrame, pred_df: pd.DataFrame, save: str) -> None:
+    '''Compute statistics for the ground truth DataFrame.
+
+    Args:
+        df (pd.DataFrame): Ground truth DataFrame.
+        save (str): Path to save the statistics.
+    '''
+    # plot violin plots of the number of features expressed per sample for both gt and pred
+    num_features_per_sample_gt = (gt_df > 0).sum(axis=1)
+    num_features_per_sample_pred = (pred_df > 0).sum(axis=1)
+    df = pd.DataFrame({
+        "Ground Truth": num_features_per_sample_gt,
+        "Predicted": num_features_per_sample_pred
+    })
+    # plot side by size violin
+    plt.figure(figsize=(12, 12))
+    sns.violinplot(data=df, orient="v")
+    plt.title("Number of Features Expressed per Sample")
+    plt.ylabel("Number of Features")
+    plt.savefig(os.path.join(save, "gt_num_features_violin.png"))
+    plt.close()
+
+    # plot the distribution of mean expression of genes per sample for both gt and pred
+    mean_expression_per_sample_gt = gt_df.mean(axis=1)
+    mean_expression_per_sample_pred = pred_df.mean(axis=1)
+    df = pd.DataFrame({
+        "Ground Truth": mean_expression_per_sample_gt,
+        "Predicted": mean_expression_per_sample_pred
+    })
+    plt.figure(figsize=(12, 12))
+    sns.violinplot(data=df, orient="v")
+    plt.title("Mean Gene Expression per Sample")
+    plt.ylabel("Mean Expression")
+    plt.savefig(os.path.join(save, "gt_mean_expression_violin.png"))
+    plt.close()
 
 def main():
     parser = argparse.ArgumentParser(description="Validate gene expression correlation")
@@ -56,9 +93,13 @@ def main():
     # reorder such that the experiment orders are the same on rows as exp_label
     gt_data_df = gt_data_df.reindex(labels)
 
-    # z-score normalized pred and actual
-    pred = (pred - np.mean(pred, axis=0)) / np.std(pred, axis=0) if np.std(pred, axis=0).all() > 0 else pred
-    gt_data_df = (gt_data_df - np.mean(gt_data_df, axis=0)) / np.std(gt_data_df, axis=0) if np.std(gt_data_df, axis=0).all() > 0 else gt_data_df
+    compute_stats_gt(gt_data_df, pred, args.output)
+
+    # Quantil normalization between pred and actual
+    qt = QuantileTransformer(random_state=0)
+    pred = qt.fit_transform(pred)
+    gt_data_df = qt.fit_transform(gt_data_df)
+    # gt_data_df = (gt_data_df - np.mean(gt_data_df, axis=0)) / np.std(gt_data_df, axis=0) if np.std(gt_data_df, axis=0).all() > 0 else gt_data_df
     # Validate the gene expression correlation
     corr_genes = []
     corr_val_genes = []
