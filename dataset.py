@@ -470,6 +470,7 @@ class ShaneSeqCellTypeDataset(Dataset):
     def _load_data(self):
         # Load images and GFP values from the dataset
         for img in os.listdir(os.path.join(self.path, "Phase")):
+            # if "02d" in img: # only load 02d images
             self.imgs.append(os.path.join(self.path, "Phase", img))
             # compute GFP values
             self.gfp_imgs.append(os.path.join(self.path, "GFP", img))
@@ -551,8 +552,33 @@ class ShaneSeqCellTypeDataset(Dataset):
         sigma_b = (mu_t*omega - mu)**2 / (omega*(1-omega) + 1e-9)
         idx = torch.argmax(sigma_b)
         return (idx.float()+0.5)/nbins
-    
-    def _extract_gfp_value(self, batch_rgb: torch.Tensor, sat_thresh=0.3, a_thresh=-6) -> float:
+
+    @staticmethod
+    def segment_cells_from_phase(phase_imgs, sigma=3):
+        """
+        phase_imgs: (B,1,H,W) in [0,1] phase contrast channel
+        Returns binary mask (B,H,W) of cells
+        """
+        from torchvision.transforms.functional import gaussian_blur
+
+        # Smooth to reduce noise
+        smooth = gaussian_blur(phase_imgs, kernel_size=11)
+
+        # Invert (cells usually darker in phase)
+        inv = 1.0 - smooth
+
+        masks = []
+        for i in range(phase_imgs.shape[0]):
+            thr = otsu_threshold(inv[i,0].flatten())
+            mask = (inv[i,0] >= thr)
+            # optional: morphological cleanup
+            mask = torch.nn.functional.max_pool2d(
+                mask[None,None].float(), 3, stride=1, padding=1).bool()[0,0]
+            masks.append(mask)
+        return torch.stack(masks, dim=0)  # (B,H,W)
+
+    def _extract_gfp_value(self, batch_rgb: torch.Tensor, phase_imgs: torch.Tensor, 
+                           sat_thresh=0.3, a_thresh=-6) -> float:
         """
         batch_rgb: (B,3,H,W) in [0,1]
         returns: (B,) tensor of % bright green area
@@ -570,13 +596,17 @@ class ShaneSeqCellTypeDataset(Dataset):
 
         green_mask = green_band & sat_ok & a_green
 
+        cell_mask = segment_cells_from_phase(phase_imgs)
+
         B,_,Hh,Ww = batch_rgb.shape
         results = []
         for i in range(B):
             vals = V[i][green_mask[i]]
-            thr = self.otsu_threshold(vals.flatten())
-            bright_mask = green_mask[i] & (V[i] >= thr)
-            percent = bright_mask.float().mean()
+            thr = otsu_threshold(vals.flatten())
+            bright_mask = green_mask[i] & (V[i] >= thr) & cell_mask[i]
+            cell_pixels = cell_mask[i].sum().item()
+            bright_pixels = bright_mask.sum().item()
+            percent = 100.0 * bright_pixels / (cell_pixels+1e-9)
             results.append(percent)
         return torch.tensor(results, device=batch_rgb.device) #shape (B,)
 
@@ -597,5 +627,5 @@ class ShaneSeqCellTypeDataset(Dataset):
         img_patches = self.extract_full_patches(img)
         gfp_patches = self.extract_full_patches(gfp_img)
         # compute the gfp value for each patch
-        gfp_values = self._extract_gfp_value(gfp_patches).view(-1, 1)
+        gfp_values = self._extract_gfp_value(gfp_patches, img_patches).view(-1, 1)
         return img_patches, (gfp_values, img_name)
