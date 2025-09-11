@@ -553,8 +553,7 @@ class ShaneSeqCellTypeDataset(Dataset):
         idx = torch.argmax(sigma_b)
         return (idx.float()+0.5)/nbins
 
-    @staticmethod
-    def segment_cells_from_phase(phase_imgs, sigma=3):
+    def segment_cells_from_phase(self, phase_imgs, sigma=3):
         """
         phase_imgs: (B,1,H,W) in [0,1] phase contrast channel
         Returns binary mask (B,H,W) of cells
@@ -569,7 +568,7 @@ class ShaneSeqCellTypeDataset(Dataset):
 
         masks = []
         for i in range(phase_imgs.shape[0]):
-            thr = otsu_threshold(inv[i,0].flatten())
+            thr = self.otsu_threshold(inv[i,0].flatten())
             mask = (inv[i,0] >= thr)
             # optional: morphological cleanup
             mask = torch.nn.functional.max_pool2d(
@@ -596,17 +595,17 @@ class ShaneSeqCellTypeDataset(Dataset):
 
         green_mask = green_band & sat_ok & a_green
 
-        cell_mask = segment_cells_from_phase(phase_imgs)
+        cell_mask = self.segment_cells_from_phase(phase_imgs)
 
         B,_,Hh,Ww = batch_rgb.shape
         results = []
         for i in range(B):
             vals = V[i][green_mask[i]]
-            thr = otsu_threshold(vals.flatten())
+            thr = self.otsu_threshold(vals.flatten())
             bright_mask = green_mask[i] & (V[i] >= thr) & cell_mask[i]
             cell_pixels = cell_mask[i].sum().item()
             bright_pixels = bright_mask.sum().item()
-            percent = 100.0 * bright_pixels / (cell_pixels+1e-9)
+            percent = bright_pixels / (cell_pixels+1e-9)
             results.append(percent)
         return torch.tensor(results, device=batch_rgb.device) #shape (B,)
 
