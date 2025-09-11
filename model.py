@@ -12,7 +12,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  end_to_end=False,
                  num_cell_types=0,
                  up_marker_genes=None,
-                 domain_weight = 5.0, 
+                 domain_weight = 5.0,
                  second_order_weight=0.1,
                  cell_type_weight=0.0,
                  marker_gene_weight=0.0,
@@ -94,7 +94,6 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # hyperparameters
         self.end_to_end = end_to_end
         self.lr = lr
-        self.domain_weight = domain_weight
         self.coral_loss_weight = second_order_weight
         self.cell_type_weight = cell_type_weight
         self.marker_gene_weight = marker_gene_weight
@@ -439,8 +438,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             dot_product_loss = (self.orthogonal_loss(pcm_bio_proj, pcm_domain_proj) 
                                 + self.orthogonal_loss(he_bio_proj, he_domain_proj)) / 2
 
-            hsic_loss = (self.hsic_rbf((pcm_bio_proj), pcm_domain_proj) 
-                        + self.hsic_rbf((he_bio_proj), he_domain_proj)) / 2
+            hsic_loss = (self.hsic_rbf(pcm_bio_proj, pcm_domain_proj) 
+                        + self.hsic_rbf(he_bio_proj, he_domain_proj)) / 2
             ortho_loss_non_weight = dot_product_loss + hsic_loss
             ortho_loss = self.orthogonal_loss_weight * ortho_loss_non_weight
         else:
@@ -498,6 +497,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
 
             # marker gene loss
             marker_gene_loss = self._marker_margin_loss(pred_exp_pcm, cell_type, self.up_marker_genes_dict, across_cell=self.across_cell)
+            coral_pcm = self.coral_loss(pred_exp_pcm, exp_pred)
+            coral_loss = coral_loss + coral_pcm
 
             # total loss for training
             total_loss = prediction_loss + self.cosine_weight * cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss + self.marker_gene_weight *  marker_gene_loss
@@ -607,6 +608,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
 
                 # marker gene loss
                 marker_gene_loss = self._marker_margin_loss(pred_exp_pcm, cell_type, self.up_marker_genes_dict, across_cell=self.across_cell)
+                coral_pcm = self.coral_loss(pred_exp_pcm, exp_pred)
+                coral_loss = coral_loss + coral_pcm
 
                 # total loss for validation
                 total_loss = prediction_loss + self.cosine_weight * cosine_pred_loss + domain_loss + self.coral_loss_weight * coral_loss + self.cell_type_weight * cell_type_loss + self.marker_gene_weight * marker_gene_loss
