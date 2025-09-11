@@ -60,6 +60,7 @@ def train(train_loader, val_loader,
           celltypes=None,
           cell_type_loss_weight=0.0,
           marker_gene_loss_weight=0,
+          cosine_weight=2.0,
           marker_across_cell=False,
           domain_weight=5.0, coral_loss_weight=0.1,
           orthogonal_weight=0.0,
@@ -148,6 +149,7 @@ def train(train_loader, val_loader,
                                     num_cell_types=num_cell_types,
                                     up_marker_genes=enriched_gene_sets,
                                     domain_weight = domain_weight, 
+                                    cosine_weight = cosine_weight,
                                     second_order_weight=coral_loss_weight,
                                     marker_gene_weight=marker_gene_loss_weight,
                                     orthogonal_loss_weight=orthogonal_weight,
@@ -199,6 +201,7 @@ def main():
     parser.add_argument('--marker_across_cell', action='store_true',
                             help='If set, the marker gene loss will be calculated across all cells. If not set, the marker gene loss will be calculated within each cell type.')
     parser.add_argument('--orthogonal_weight', type=float, default=0, help='Weight for the orthogonal loss')
+    parser.add_argument('--cosine_weight', type=float, default=0, help='Weight for the cosine loss')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     parser.add_argument('--ablation_mode', action='store_true', 
                         help='If set, the model will be trained with ablation with removed marker genes')
@@ -243,6 +246,7 @@ def main():
           converter=converter,
           feature_extractor=feature_extractor, 
           domain_weight=args.domain_weight, coral_loss_weight=args.coral_loss_weight,
+          cosine_weight=args.cosine_weight,
           orthogonal_weight=args.orthogonal_weight,
           lr=args.lr, save_dir=args.output_dir, epochs=args.epochs, name=args.name)
 
