@@ -389,7 +389,7 @@ class ShaneSeqDataset(Dataset):
         for exp in experiments:
             exp_dir = os.path.join(path, exp, "Phase")
             if os.path.isdir(exp_dir):
-                # grab only the 02d images
+                # grab only the 02d images, since only those have sequencing data
                 self.experiments.extend([f"{exp}_{img[9]}" for img in os.listdir(exp_dir) if "02d" in img ])
                 self.imgs.extend([os.path.join(exp_dir, img) for img in os.listdir(exp_dir) if "02d" in img])
 
@@ -422,13 +422,16 @@ class ShaneSeqDataset(Dataset):
     def __getitem__(self, idx):
         img_path = self.imgs[idx]
         exp = self.experiments[idx]
+        cell_type = ("MCF10A" if "GFP" in exp else 
+                     "HCT116" if "HCT" in exp else
+                     "Mixed")
         img = Image.open(img_path).convert("RGB")
         img = self.transform(img)
         if img.max().item() > 1:
             img = img / 255.0
         # chop into patches
         imgs = self.extract_full_patches(img)  # (num_patches, 3, 256, 256)
-        return imgs, (torch.tensor([0]), img_path, exp)
+        return imgs, (torch.tensor([0 if cell_type == "MCF10A" else 1 if cell_type == "HCT116" else 2]), img_path, cell_type, exp)
 
 #* Shane's seuqnecing for cell type identification
 class ShaneSeqCellTypeDataset(Dataset):
@@ -628,3 +631,64 @@ class ShaneSeqCellTypeDataset(Dataset):
         # compute the gfp value for each patch
         gfp_values = self._extract_gfp_value(gfp_patches, img_patches).view(-1, 1)
         return img_patches, (gfp_values, img_name)
+    
+#* Shane's seuqnecing for confluency
+class ShaneSeqConfluencyDataset(Dataset):
+    '''
+    Dataset for extracting confluency features from Shane's sequencing data.
+    In this dataset, only none IR images are used.
+    Images are in 3 classes:
+    - day 0: low confluency
+    - day 1: medium confluency
+    - day 2: high confluency
+    '''
+    def __init__(self, path: str):
+        super(ShaneSeqConfluencyDataset, self).__init__()
+        experiments = os.listdir(path)
+        self.imgs = []
+        self.experiments = []
+        self.cell_types = []
+        for exp in experiments:
+            exp_dir = os.path.join(path, exp, "Phase")
+            if os.path.isdir(exp_dir) and ("NIR" in exp): # only use NIR images
+                # grab only the 00d, 01d, and 02d images
+                self.experiments.extend([f"{'day0' if '00h' in img else 'day1' if '23h' in img else 'day2'}" for img in os.listdir(exp_dir) if img[9:11] in ["00", "01", "02"]])
+                self.cell_types.extend([ "MCF10A" if "GFP" in exp else
+                                         "HCT116" if "HCT" in exp else
+                                         "Mixed"])
+                self.imgs.extend([os.path.join(exp_dir, img) for img in os.listdir(exp_dir) if img[9:11] in ["00", "01", "02"]])
+
+        self.transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+        ])
+    
+    @staticmethod
+    def extract_full_patches(img: torch.Tensor, patch_size=256):
+        # img: (C, H, W)
+        C, H, W = img.shape
+        img_batched = img.unsqueeze(0)  # (1, C, H, W)
+
+        # Only patches that fully fit will be returned
+        patches = F.unfold(
+            img_batched, 
+            kernel_size=patch_size, 
+            stride=patch_size
+        )
+
+        # Each column is a flattened patch
+        patches = patches.transpose(1, 2)  # (1, num_patches, C*ps*ps)
+        patches = patches.reshape(-1, C, patch_size, patch_size)
+        return patches
+
+    def __len__(self):
+        return len(self.imgs)
+    
+    def __getitem__(self, idx):
+        img_path = self.imgs[idx]
+        exp_name = self.experiments[idx]
+        img = self.transform(Image.open(img_path).convert("RGB"))
+        if img.max().item() > 1:
+            img = img / 255.0
+        imgs = self.extract_full_patches(img)  # (num_patches, 3, 256, 256)
+        return imgs, (torch.tensor([0 if exp_name == "day0" else 1 if exp_name == "day1" else 2]), img_path, self.cell_types[idx], exp_name)
