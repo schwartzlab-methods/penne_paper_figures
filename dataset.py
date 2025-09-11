@@ -36,11 +36,29 @@ class LiveCellDataset(Dataset):
         self.transform = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32),
-            v2.RandomCrop((256,256)),
-            v2.Resize((256, 256)),
+            # v2.RandomCrop((256,256)),
+            # v2.Resize((256, 256)),
         ])
         self._write_attributes() # this will write class_to_idx and targets
     
+    @staticmethod
+    def extract_full_patches(img: torch.Tensor, patch_size=256):
+        # img: (C, H, W)
+        C, H, W = img.shape
+        img_batched = img.unsqueeze(0)  # (1, C, H, W)
+
+        # Only patches that fully fit will be returned
+        patches = F.unfold(
+            img_batched, 
+            kernel_size=patch_size, 
+            stride=patch_size
+        )
+
+        # Each column is a flattened patch
+        patches = patches.transpose(1, 2)  # (1, num_patches, C*ps*ps)
+        patches = patches.reshape(-1, C, patch_size, patch_size)
+        return patches
+
     def _write_attributes(self):
         '''Write the attributes for the dataset.
         '''
@@ -60,13 +78,15 @@ class LiveCellDataset(Dataset):
         img = Image.open(self.images[idx])
         img = np.array(img, dtype=np.uint16)
         img = self.transform(img)
-        img = img / 255 # rescale to [0,1]
+        if img.max().item() > 1:
+            img = img / 255 # rescale to [0,1]
         img = torch.clamp(img, max=1, min=0) #ensure no float overflow
+        imgs = self.extract_full_patches(img)  # (num_patches, C, 256, 256)
         cls_idx = self.targets[idx]
         cls = self.classes[idx]
-        # retrun the image as x and the class int label, image path, and img cls as y
-        return img, (cls_idx, self.images[idx], cls)
-    
+        # return the image as x and the class int label, image path, and img cls as y
+        return imgs, (cls_idx, self.images[idx], cls)
+
     def __len__(self):
         return len(self.images)
 
