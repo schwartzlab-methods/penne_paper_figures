@@ -652,11 +652,11 @@ class ShaneSeqConfluencyDataset(Dataset):
             exp_dir = os.path.join(path, exp, "Phase")
             if os.path.isdir(exp_dir) and ("NIR" in exp): # only use NIR images
                 # grab only the 00d, 01d, and 02d images
-                self.experiments.extend([f"{'day0' if '00h' in img else 'day1' if '23h' in img else 'day2'}" for img in os.listdir(exp_dir) if img[9:11] in ["00", "01", "02"]])
+                self.experiments.extend([f"{'day0' if '00h' in img else 'day1' if '23h' in img else 'day2'}" for img in os.listdir(exp_dir)])
                 self.cell_types.extend([ "MCF10A" if "GFP" in exp else
                                          "HCT116" if "HCT" in exp else
-                                         "Mixed"])
-                self.imgs.extend([os.path.join(exp_dir, img) for img in os.listdir(exp_dir) if img[9:11] in ["00", "01", "02"]])
+                                         "Mixed"]*len(os.listdir(exp_dir)))
+                self.imgs.extend([os.path.join(exp_dir, img) for img in os.listdir(exp_dir)])
 
         self.transform = v2.Compose([
             v2.ToImage(),
