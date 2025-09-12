@@ -19,6 +19,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  orthogonal_loss_weight=0.0,
                  cosine_weight = 2.0,
                  lr=1e-3,
+                 if_ortho=True,
                  do_gmlp=True, across_cell=False):
         '''Gene expression prediction model for Visium HD data.
 
@@ -55,7 +56,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
         # self.translator = modules.Translator()
-        if orthogonal_loss_weight > 0:
+        if if_ortho:
             # biology translator
             self.feature_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=1024)
             # self.feature_biology_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=896)
@@ -98,7 +99,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.cell_type_weight = cell_type_weight
         self.marker_gene_weight = marker_gene_weight
         self.second_stage_training = True if up_marker_genes else False
-        self.make_ortho = orthogonal_loss_weight > 0
+        self.make_ortho = if_ortho
         self.across_cell = across_cell
         self.cosine_weight = cosine_weight
         # loss functions
@@ -107,7 +108,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.domain_criterion = nn.BCELoss()
         # if up_marker_genes:
         #     self.cell_type_criterion = nn.CrossEntropyLoss()
-        if orthogonal_loss_weight > 0:
+        if if_ortho:
             self.domain_separation_criterion = nn.BCELoss()
 
         self.save_hyperparameters(ignore=["converter", "feature_extractor"])
@@ -204,7 +205,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # Biased HSIC (normalized by (B-1)^2 to keep scales reasonable)
         hsic = (Kc * Lc).sum() / ((B - 1) ** 2)
         return hsic
-    
+
     def forward(self, x: torch.Tensor, if_convert: bool=False, if_normalize=True) -> torch.Tensor:
         '''Forward pass for the model.
 
@@ -266,7 +267,9 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 # if if_convert:
                 #     x = self.feature_biology_translator_pcm(x)
                 # else:
-                x = self.feature_translator(x)[:, :768]
+                x = self.feature_translator(x)
+            if self.make_ortho:
+                x = x[:, :768]
             return x
 
     def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
