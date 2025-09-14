@@ -11,6 +11,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  converter, feature_extractor,
                  end_to_end=False,
                  num_cell_types=0,
+                 bio_feature_size=768,
+                 domain_feature_size=256,
                  up_marker_genes=None,
                  domain_weight = 5.0,
                  second_order_weight=0.1,
@@ -57,6 +59,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # modules
         # self.translator = modules.Translator()
         if if_ortho:
+            self.bio_feature_size = bio_feature_size
+            self.domain_feature_size = domain_feature_size
             # biology translator
             self.feature_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=1024)
             # self.feature_biology_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=896)
@@ -64,19 +68,21 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # self.feature_domain_translator = modules.OrthogonalTranslator(feature_in=1024, feature_out=1024)
             # self.feature_domain_translator_pcm = modules.OrthogonalTranslator(feature_in=1024, feature_out=128)
             # domain classifier
-            self.domain_separator = modules.DomainDiscriminator(feature_in=256, do_reversal=False)
+            self.domain_separator = modules.DomainDiscriminator(feature_in=self.domain_feature_size, do_reversal=False)
             self.orthogonal_loss_weight = orthogonal_loss_weight
             # HSIC projector
-            self.projector_pcm = modules.HSICProjector(d_x=768, d_y=256, proj_dim=128)
-            self.projector_he = modules.HSICProjector(d_x=768, d_y=256, proj_dim=128)
-        predictor_input_size = 768 if orthogonal_loss_weight > 0 else 1024
-        self.domain_discriminator = modules.DomainDiscriminator(predictor_input_size, alpha=domain_weight)
-        self.cell_type_classifier = modules.CellTypeClassifier(input_size=predictor_input_size, hidden_size=512, num_classes=num_cell_types)
+            self.projector_pcm = modules.HSICProjector(d_x=self.bio_feature_size, d_y=self.domain_feature_size, proj_dim=128)
+            self.projector_he = modules.HSICProjector(d_x=self.bio_feature_size, d_y=self.domain_feature_size, proj_dim=128)
+        else:
+            self.bio_feature_size = 1024
+            self.domain_feature_size = 0
+        self.domain_discriminator = modules.DomainDiscriminator(self.bio_feature_size, alpha=domain_weight)
+        self.cell_type_classifier = modules.CellTypeClassifier(input_size=self.bio_feature_size, hidden_size=512, num_classes=num_cell_types)
         self.cell_type_criterion = nn.CrossEntropyLoss()
         if do_gmlp: # Use Gated MLP for prediction
-            self.predictor = modules.PredictorGMLP(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
+            self.predictor = modules.PredictorGMLP(input_size=self.bio_feature_size, hidden_size=4056, output_size=num_genes)
         else:
-            self.predictor = modules.Predictor(input_size=predictor_input_size, hidden_size=4056, output_size=num_genes)
+            self.predictor = modules.Predictor(input_size=self.bio_feature_size, hidden_size=4056, output_size=num_genes)
         if up_marker_genes:
             # self.cell_type_classifier = modules.CellTypeClassifier(input_size=num_genes, hidden_size=512, num_classes=num_cell_types)
             self.up_marker_genes_dict = up_marker_genes
@@ -177,7 +183,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         def _rbf_kernel(x, sigma2=None, eps=1e-8):
             # x: [B, D]
             # pairwise squared distances
-            d2 = torch.cdist(x, x, p=2.0) ** 2            # [B,B]
+            d2 = torch.cdist(x, x, p=2.0) ** 2 # [B,B]
             if sigma2 is None:
                 # median heuristic (detach to stabilize); add eps to avoid zero
                 sigma2 = torch.median(d2.detach())
@@ -229,7 +235,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # if if_convert:
             #     x = self.feature_biology_translator_pcm(x)
             # else:
-            x = self.feature_translator(x)[:, :768]
+            x = self.feature_translator(x)[:, :self.bio_feature_size]
         x = self.predictor(x)
         x = torch.clamp(x, min=0)
         if if_normalize:
@@ -269,7 +275,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 # else:
                 x = self.feature_translator(x)
             if self.make_ortho:
-                x = x[:, :768]
+                x = x[:, :self.bio_feature_size]
             return x
 
     def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
@@ -301,7 +307,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 # if if_convert:
                 #     x = self.feature_biology_translator_pcm(x)
                 # else:
-                x = self.feature_translator(x)[:, :768]
+                x = self.feature_translator(x)[:, :self.bio_feature_size]
             x = self.predictor(x, return_gate=True)
             return x
 
@@ -334,7 +340,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 # if if_convert:
                 #     x = self.feature_domain_translator_pcm(x)
                 # else:
-                x = self.feature_translator(x)[:, 768:]
+                x = self.feature_translator(x)[:, self.bio_feature_size:]
             return x
 
     def _marker_margin_loss(self, pred_expr: torch.Tensor, cell_types: torch.Tensor,
@@ -431,10 +437,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         # he_translated = self.translator(he_features)
         # pcm_translated = self.translator(pcm_features)
         if hasattr(self, "feature_translator"):
-            he_translated_biology = self.feature_translator(he_translated)[:, :768]
-            pcm_translated_biology = self.feature_translator(pcm_translated)[:, :768]
-            he_translated_domain = self.feature_translator(he_translated)[:, 768:]
-            pcm_translated_domain = self.feature_translator(pcm_translated)[:, 768:]
+            he_translated_biology = self.feature_translator(he_translated)[:, :self.bio_feature_size]
+            pcm_translated_biology = self.feature_translator(pcm_translated)[:, :self.bio_feature_size]
+            he_translated_domain = self.feature_translator(he_translated)[:, self.bio_feature_size:]
+            pcm_translated_domain = self.feature_translator(pcm_translated)[:, self.bio_feature_size:]
             # loss to enforce orthogonality between biological and domain features
             pcm_bio_proj, pcm_domain_proj = self.projector_pcm(pcm_translated_biology, pcm_translated_domain)
             he_bio_proj, he_domain_proj = self.projector_he(he_translated_biology, he_translated_domain)
@@ -550,10 +556,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             # he_translated = self.translator(he_features)
             # pcm_translated = self.translator(pcm_features)
             if hasattr(self, "feature_translator"):
-                he_translated_biology = self.feature_translator(he_translated)[:, :768]
-                pcm_translated_biology = self.feature_translator(pcm_translated)[:, :768]
-                he_translated_domain = self.feature_translator(he_translated)[:, 768:]
-                pcm_translated_domain = self.feature_translator(pcm_translated)[:, 768:]
+                he_translated_biology = self.feature_translator(he_translated)[:, :self.bio_feature_size]
+                pcm_translated_biology = self.feature_translator(pcm_translated)[:, :self.bio_feature_size]
+                he_translated_domain = self.feature_translator(he_translated)[:, self.bio_feature_size:]
+                pcm_translated_domain = self.feature_translator(pcm_translated)[:, self.bio_feature_size:]
                 # loss to enforce orthogonality between biological and domain features
                 pcm_bio_proj, pcm_domain_proj = self.projector_pcm(pcm_translated_biology, pcm_translated_domain)
                 he_bio_proj, he_domain_proj = self.projector_he(he_translated_biology, he_translated_domain)
