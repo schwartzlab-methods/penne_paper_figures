@@ -54,6 +54,8 @@ def train(train_loader, val_loader,
           num_cell_types=0, 
           end_to_end=False,
           up_marker_genes=None,
+          bio_feature_size=768,
+          domain_feature_size=256,
           if_ablation=False,
           gene_names=None,
           pcm_cell_to_idx=None,
@@ -147,6 +149,8 @@ def train(train_loader, val_loader,
                                     converter, feature_extractor,
                                     end_to_end=end_to_end,
                                     num_cell_types=num_cell_types,
+                                    bio_feature_size=bio_feature_size,
+                                    domain_feature_size=domain_feature_size,
                                     up_marker_genes=enriched_gene_sets,
                                     domain_weight = domain_weight, 
                                     cosine_weight = cosine_weight,
@@ -207,6 +211,10 @@ def main():
                         help='If set, the model will be trained with ablation with removed marker genes')
     parser.add_argument('--feature_extractor', type=str, default="phikon-2", 
                         help='Feature extractor model to use') #! todo - implement other feature extractors
+    parser.add_argument('--bio_feature_size', type=int, default=768, 
+                        help='The size of the biological feature after disentanglement')
+    parser.add_argument('--domain_feature_size', type=int, default=256, 
+                        help='The size of the domain feature after disentanglement')
     args = parser.parse_args()
     print("Starting the training script with the following arguments:")
     print(args)
@@ -236,6 +244,8 @@ def main():
           num_cell_types=dataset.datasets[0].num_pcm_classes,
           end_to_end=args.end_to_end,
           up_marker_genes=args.up_marker_genes,
+          bio_feature_size=args.bio_feature_size,
+          domain_feature_size=args.domain_feature_size,
           if_ablation=args.ablation_mode,
           gene_names=args.gene_names,
           pcm_cell_to_idx=dataset.datasets[0].livecell_class_to_idx,
