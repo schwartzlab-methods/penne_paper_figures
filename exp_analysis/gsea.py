@@ -12,11 +12,15 @@ import seaborn as sns
 def pre_rank(args):
     # Load the csv file
     df = pd.read_csv(args.csv)
-    # sort by metrics values (-log p-value * sign)
-    df["score"] = -np.log10(df['p_value'] + 1e-10) * np.sign(df['log_fc'])
+    # # sort by metrics values (-log p-value * sign)
+    # df["score"] = -np.log10(df['p_value'] + 1e-10) * np.sign(df['log_fc'])
+    try:
+        df["score"] = df['log_fc']
+        # df["score"] = df['t_stat']
+    except KeyError:
+        df["score"] = df['Coefficient']
     df = df.sort_values(by='score', ascending=False)
     df = df.loc[:, ['gene', 'score']]
-    # df.columns = ['gene', 'score']
 
     if args.mapping_dict:
         # Load the mapping dictionary
@@ -84,6 +88,37 @@ def pre_rank(args):
     plt.savefig(os.path.join(args.output, 'gsea_results_btm.png'))
     plt.close()
 
+    if args.comparisons:
+        histogram_df = pd.DataFrame({"positive_NES": pre_res.res2d[pre_res.res2d["NES"] > 0]["Term"],
+                                     "negative_NES": pre_res.res2d[pre_res.res2d["NES"] < 0]["Term"]})
+        # compute the positive enrichment and negative enrichment for each comparison
+        final_results_dict = {}
+        for comp in args.comparisons:
+            # get the number of rows where comp is a part of the term of each
+            num_pos = np.sum(histogram_df["positive_NES"].str.contains(comp, case=False, na=False))
+            num_neg = np.sum(histogram_df["negative_NES"].str.contains(comp, case=False, na=False))
+            normalized_num_pos = num_pos / (num_pos + num_neg) if (num_pos + num_neg) > 0 else 0
+            normalized_num_neg = num_neg / (num_pos + num_neg) if (num_pos + num_neg) > 0 else 0
+            final_results_dict[comp] = [normalized_num_pos, normalized_num_neg]
+        # plot size by side bar plot for all comparisons of positive and negative enrichment
+        # make this in one plot
+        plt.figure(figsize=(10, 6))
+        comps = list(final_results_dict.keys())
+        pos_values = [final_results_dict[comp][0] for comp in comps]
+        neg_values = [final_results_dict[comp][1] for comp in comps]
+        x = np.arange(len(comps))
+        width = 0.35
+        plt.bar(x - width/2, pos_values, width, label='Positive Enrichment')
+        plt.bar(x + width/2, neg_values, width, label='Negative Enrichment')
+        plt.xlabel('Comparisons')
+        plt.ylabel('Relative Frequency')
+        plt.title('Positive vs Negative Enrichment Across Comparisons')
+        plt.xticks(x, comps, rotation=45, ha='right')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(args.output, f'enrichr_results_all_comparisons_sbs.png'))
+        plt.close()
+
 def enrichr(args):
     # Load the csv file
     with open(args.txt, 'r') as f:
@@ -135,6 +170,8 @@ def main():
     parser.add_argument('--gene_sets', type=str, nargs="+", default=["MSigDB_Hallmark_2020"], 
                         help='Path to the gene sets file (GMT format or a string with names from GSEA). ' \
                         'If not provided, will use the default of MSigDB_Hallmark_2020.')
+    parser.add_argument("--comparisons", type=str, nargs="+", default=None, 
+                        help='List of comparisons to analyze. It will generate a sbs bar plot for each comparison.')
     args = parser.parse_args()
     if not os.path.exists(args.output):
         os.makedirs(args.output)
