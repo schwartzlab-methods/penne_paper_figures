@@ -11,8 +11,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  converter, feature_extractor,
                  end_to_end=False,
                  num_cell_types=0,
-                 bio_feature_size=768,
-                 domain_feature_size=256,
+                 bio_feature_size=960,
+                 domain_feature_size=64,
                  up_marker_genes=None,
                  domain_weight = 5.0,
                  second_order_weight=0.1,
@@ -22,6 +22,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                  cosine_weight = 2.0,
                  lr=1e-3,
                  if_ortho=True,
+                 convert_for_pcm=True,
                  do_gmlp=True, across_cell=False):
         '''Gene expression prediction model for Visium HD data.
 
@@ -106,6 +107,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         self.marker_gene_weight = marker_gene_weight
         self.second_stage_training = True if up_marker_genes else False
         self.make_ortho = if_ortho
+        self.convert_for_pcm = convert_for_pcm
         self.across_cell = across_cell
         self.cosine_weight = cosine_weight
         # loss functions
@@ -427,7 +429,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         '''
         he_image, mtx, pcm_image, _, cell_type = batch
         # obtain the features
-        pcm_converted = self.converter(pcm_image)
+        if self.convert_for_pcm:
+            pcm_converted = self.converter(pcm_image)
+        else:
+            pcm_converted = pcm_image
         pcm_converted = self.image_processor(pcm_converted)
         he_converted = self.image_processor(he_image)
         pcm_translated = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).requires_grad_()#.detach()
@@ -547,7 +552,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         he_image, mtx, pcm_image, name, cell_type = batch
         with torch.no_grad():
             # obtain the features
-            pcm_converted = self.converter(pcm_image)
+            if self.convert_for_pcm:
+                pcm_converted = self.converter(pcm_image)
+            else:
+                pcm_converted = pcm_image
             pcm_converted = self.image_processor(pcm_converted)
             he_converted = self.image_processor(he_image)
             pcm_translated = self.feature_extractor(pcm_converted).last_hidden_state[:, 0, :].view(pcm_image.shape[0], -1).detach()
