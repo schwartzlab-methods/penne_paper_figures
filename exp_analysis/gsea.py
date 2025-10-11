@@ -10,13 +10,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 def pre_rank(args):
-    # Load the csv file
     df = pd.read_csv(args.csv)
-    # # sort by metrics values (-log p-value * sign)
-    # df["score"] = -np.log10(df['p_value'] + 1e-10) * np.sign(df['log_fc'])
     try:
         df["score"] = df['log_fc']
-        # df["score"] = df['t_stat']
     except KeyError:
         df["score"] = df['Coefficient']
     df = df.sort_values(by='score', ascending=False)
