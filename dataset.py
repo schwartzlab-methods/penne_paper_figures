@@ -300,19 +300,23 @@ class VisiumHD_Livecell_Dataset(Dataset):
         num_genes (int): Number of genes in the dataset.
         num_pcm_classes (int): Number of PCM classes (ie: cell types) in the dataset.
     '''
-    def __init__(self, tissue_dir: str, mtx_dir: str, livecell_dir: str):
+    def __init__(self, tissue_dir: str, mtx_dir: str, livecell_dir: str, use_mtx: bool = True):
         '''Initialize the VisiumHD and LIVECell dataset.
 
         Args:
             tissue_dir (str): Path to the tissue image directory.
             mtx_dir (str): Path to the matrix directory.
             livecell_dir (str): Path to the LIVECell image main directory.
+            use_mtx (bool): Whether to use the matrix files. If False, a zero tensor will be returned for the matrix.
         '''
         super(VisiumHD_Livecell_Dataset, self).__init__()
         self.tissue_dir = tissue_dir
-        self.mtx_dir = mtx_dir
-        self.imgs = np.array(os.listdir(tissue_dir))
         self.mtxs = np.array(os.listdir(mtx_dir))
+        if use_mtx:
+            self.mtx_dir = mtx_dir
+        else:
+            self.mtx_dir = None
+        self.imgs = np.array(os.listdir(tissue_dir))
         self.livecell_path = []
         self.livecell_classes = [] #classes are string labels of the cell types
         self._write_attributes(livecell_dir)
@@ -349,16 +353,23 @@ class VisiumHD_Livecell_Dataset(Dataset):
         '''
         name = self.imgs[idx].split(".")[0]
         he_image_path = os.path.join(self.tissue_dir, f"{name}.png")
-        mtx_path = os.path.join(self.mtx_dir, f"{name}.npy")
+        if self.mtx_dir:
+            mtx_path = os.path.join(self.mtx_dir, f"{name}.npy")
+            mtx = np.load(mtx_path)
+            mtx_tensor = torch.tensor(mtx).float().view(-1)
+        else:
+            mtx_tensor = torch.zeros((self.num_genes,), dtype=torch.float32) # if no mtx_dir is provided, return a zero tensor
         image = Image.open(he_image_path).convert('RGB')
-        mtx = np.load(mtx_path)
         # put in tensor
-        image = self.he_transforms(image) / 255 # scale to [0,1]
-        mtx_tensor = torch.tensor(mtx).float().view(-1)
+        image = self.he_transforms(image)
+        if image.max() > 1:
+            image = image / 255 # rescale to [0,1]
         # select a random image from the livecell dataset
         livecell_path = self.livecell_path[idx % len(self.livecell_path)]
         livecell_img = Image.open(livecell_path).convert('RGB')
-        livecell_img = self.pcm_transforms(livecell_img) / 255 # scale to [0,1]
+        livecell_img = self.pcm_transforms(livecell_img)
+        if livecell_img.max() > 1:
+            livecell_img = livecell_img / 255 # scale to [0,1]
         return image, mtx_tensor, livecell_img, he_image_path, self.livecell_class_to_idx[self.livecell_classes[idx % len(self.livecell_classes)]]
     
     @staticmethod
@@ -410,7 +421,7 @@ class ShaneSeqDataset(Dataset):
             exp_dir = os.path.join(path, exp, "Phase")
             if os.path.isdir(exp_dir):
                 # grab only the 02d images, since only those have sequencing data
-                self.experiments.extend([f"{exp}_{img[9]}" for img in os.listdir(exp_dir) if "02d" in img ])
+                self.experiments.extend([f"{exp}_{img[9]}" for img in os.listdir(exp_dir) if "02d" in img])
                 self.imgs.extend([os.path.join(exp_dir, img) for img in os.listdir(exp_dir) if "02d" in img])
 
         self.transform = v2.Compose([
@@ -445,13 +456,15 @@ class ShaneSeqDataset(Dataset):
         cell_type = ("MCF10A" if "GFP" in exp else 
                      "HCT116" if "HCT" in exp else
                      "Mixed")
+        treatment = ("NIR" if "NIR" in exp else "IR")
         img = Image.open(img_path).convert("RGB")
         img = self.transform(img)
         if img.max().item() > 1:
             img = img / 255.0
         # chop into patches
         imgs = self.extract_full_patches(img)  # (num_patches, 3, 256, 256)
-        return imgs, (torch.tensor([0 if cell_type == "MCF10A" else 1 if cell_type == "HCT116" else 2]), img_path, cell_type, exp)
+        return imgs, (torch.tensor([0 if cell_type == "MCF10A" else 1 if cell_type == "HCT116" else 2]), 
+                      img_path, cell_type, treatment, exp)
 
 #* Shane's seuqnecing for cell type identification
 class ShaneSeqCellTypeDataset(Dataset):
@@ -578,7 +591,7 @@ class ShaneSeqCellTypeDataset(Dataset):
 
     def segment_cells_from_phase(self, phase_imgs, sigma=3):
         """
-        phase_imgs: (B,1,H,W) in [0,1] phase contrast channel
+        phase_imgs: (B,3,H,W) in [0,1]
         Returns binary mask (B,H,W) of cells
         """
         from torchvision.transforms.functional import gaussian_blur
@@ -587,7 +600,8 @@ class ShaneSeqCellTypeDataset(Dataset):
         smooth = gaussian_blur(phase_imgs, kernel_size=11)
 
         # Invert (cells usually darker in phase)
-        inv = 1.0 - smooth
+        # inv = 1.0 - smooth
+        inv = smooth
 
         masks = []
         for i in range(phase_imgs.shape[0]):
@@ -632,6 +646,11 @@ class ShaneSeqCellTypeDataset(Dataset):
             results.append(percent)
         return torch.tensor(results, device=batch_rgb.device) #shape (B,)
 
+    def mean_gfp_intensity(self, batch_rgb, phase_imgs):
+        g = batch_rgb[:,1]   # assume GFP = channel 1
+        cell_mask = self.segment_cells_from_phase(phase_imgs)
+        return (g*cell_mask).sum(dim=[1,2]) / (cell_mask.sum(dim=[1,2])+1e-9) #shape (B,)
+
     def __len__(self):
         return len(self.imgs)
 
@@ -649,7 +668,8 @@ class ShaneSeqCellTypeDataset(Dataset):
         img_patches = self.extract_full_patches(img)
         gfp_patches = self.extract_full_patches(gfp_img)
         # compute the gfp value for each patch
-        gfp_values = self._extract_gfp_value(gfp_patches, img_patches).view(-1, 1)
+        # gfp_values = self._extract_gfp_value(gfp_patches, img_patches).view(-1, 1)
+        gfp_values = self.mean_gfp_intensity(gfp_patches, img_patches).view(-1, 1)
         return img_patches, (gfp_values, img_name)
     
 #* Shane's seuqnecing for confluency
@@ -711,4 +731,5 @@ class ShaneSeqConfluencyDataset(Dataset):
         if img.max().item() > 1:
             img = img / 255.0
         imgs = self.extract_full_patches(img)  # (num_patches, 3, 256, 256)
-        return imgs, (torch.tensor([0 if exp_name == "day0" else 1 if exp_name == "day1" else 2]), img_path, self.cell_types[idx], exp_name)
+        return imgs, (torch.tensor([0 if exp_name == "day0" else 1 if exp_name == "day1" else 2]), 
+                      img_path, self.cell_types[idx], exp_name, f"{self.cell_types[idx]}_{exp_name}")
