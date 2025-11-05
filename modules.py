@@ -7,41 +7,74 @@ import torchvision.transforms.v2 as v2
 import torch
 
 
-#! Domain adaptation modules
-#! These translate the feature vectors from both the real H&E and synthetic H&E images 
-#! into the same space.
-#! It uses a Domain Adversarial Neural Network (DANN) approach to align the feature distributions
-#! of the two domains.
+########! Domain adaptation modules
+########! These translate the feature vectors from both the real H&E and synthetic H&E images 
+########! into the same space.
+########! It uses a Domain Adversarial Neural Network (DANN) approach to align the feature distributions
+########! of the two domains.
 
 #* Translator for features
-class Translator(nn.Module):
-    def __init__(self, feature_dim=1024, hidden_dim=512, output_dim=1024):
-        super(Translator, self).__init__()
-        self.fc1 = nn.Linear(feature_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, output_dim) 
-        self.dropout = nn.Dropout(0.3)
-        self.bn = nn.BatchNorm1d(hidden_dim)
+# class Translator(nn.Module):
+#     def __init__(self, feature_dim=1024, hidden_dim=512, output_dim=1024):
+#         '''Translator module for domain adaptation of PCM features can H&E features
+
+#         Args:
+#             feature_dim (int, optional): The input feature dimension. Defaults to 1024.
+#             hidden_dim (int, optional): The hidden layer dimension. Defaults to 512.
+#             output_dim (int, optional): The output feature dimension. Defaults to 1024.
+#         '''
+#         super(Translator, self).__init__()
+#         self.fc1 = nn.Linear(feature_dim, hidden_dim)
+#         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+#         self.fc3 = nn.Linear(hidden_dim, output_dim) 
+#         self.dropout = nn.Dropout(0.3)
+#         self.bn = nn.BatchNorm1d(hidden_dim)
     
-    def forward(self, x):
-        x = F.relu(self.bn(self.fc1(x)))
-        x = self.dropout(x)
-        x = F.relu(self.bn(self.fc2(x)))
-        return self.fc3(x)  # No activation to keep range flexible
+#     def forward(self, x):
+#         x = F.relu(self.bn(self.fc1(x)))
+#         x = self.dropout(x)
+#         x = F.relu(self.bn(self.fc2(x)))
+#         return self.fc3(x)  # No activation to keep range flexible
 
 #* Gradient reversal layer (for adversarial training)
 class GradReverse(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, alpha=1.0):
+        '''
+        Forward pass for gradient reversal layer
+        Args:
+            ctx: context, used to store information for backward pass
+            x: input tensor of any shape
+            alpha: scaling factor for gradient reversal. Defaults to 1.0.
+        Returns:
+            x: output tensor, same shape as input
+        '''
         ctx.alpha = alpha
         return x.view_as(x)
 
     @staticmethod
     def backward(ctx, grad_output):
+        '''
+        Backward pass for gradient reversal layer
+        Args:
+            ctx: context, used to retrieve information from forward pass
+            grad_output: gradient of the loss with respect to the output
+
+        Returns:
+            gradient of the loss with respect to the input, scaled by -alpha
+        '''
         return grad_output.neg() * ctx.alpha, None
 
+#* Discriminator
 class DomainDiscriminator(nn.Module):
     def __init__(self, feature_in=1024, alpha=1.0, do_reversal=True):
+        '''General purpose discriminator that classify the feature vectors into one of two domains
+        Args:
+            feature_in (int, optional): The input feature dimension. Defaults to 1024.
+            alpha (float, optional): The scaling factor for gradient reversal layer. Defaults to 1.0.
+            do_reversal (bool, optional): Whether to apply gradient reversal. Set to True for DANN, false otherwise for a standard discriminator. 
+                                        Defaults to True.
+        '''
         super(DomainDiscriminator, self).__init__()
         self.model = nn.Sequential(
             nn.Linear(feature_in, 512),
@@ -66,6 +99,16 @@ class DomainDiscriminator(nn.Module):
         self.do_reversal = do_reversal
 
     def forward(self, x):
+        '''Forward pass for discriminator
+
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, feature_dim)
+
+        Returns:
+            Tensor: Output tensor of shape (batch_size, 1) representing domain probabilities. Each value is between 0 and 1.
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, feature_in)
+        '''
         if self.do_reversal:
             out = GradReverse.apply(x, self.alpha)
             return self.model(out)
@@ -75,6 +118,13 @@ class DomainDiscriminator(nn.Module):
 #* Orthogonality translator
 class OrthogonalTranslator(nn.Module):
     def __init__(self, feature_in=1024, feature_out=1024):
+        '''
+        Translator module for domain adaptation of PCM features and H&E features
+
+        Args:
+            feature_in (int, optional): The input feature dimension. Defaults to 1024.
+            feature_out (int, optional): The output feature dimension. Defaults to 1024.
+        '''
         super(OrthogonalTranslator, self).__init__()
         self.fc1 = nn.Linear(feature_in, 512)
         self.ln1 = nn.LayerNorm(512)
@@ -96,6 +146,15 @@ class OrthogonalTranslator(nn.Module):
 #! Predict the whole transcriptome from the image
 class Predictor(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, p=0.2):
+        '''
+        A simple feedforward neural network to predict gene expression from image features.
+        This does not use Gated MLP blocks.
+        Args:
+            input_size (int): Size of the input feature vector.
+            hidden_size (int): Size of the hidden layers.
+            output_size (int): Size of the output gene expression vector.
+            p (float, optional): Dropout probability. Defaults to 0.2.
+        '''
         super(Predictor, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
@@ -112,6 +171,14 @@ class Predictor(nn.Module):
 
 class HSICProjector(nn.Module):
     def __init__(self, d_x, d_y, proj_dim=128):
+        '''
+        HSIC Projector module to project two different feature spaces into a common space of the same dimension.
+        This stablizes the training when using HSIC and cosine similarity losses for domain adaptation
+        Args:
+            d_x (int): Dimension of the first feature space.
+            d_y (int): Dimension of the second feature space.
+            proj_dim (int, optional): Dimension of the common projected space. Defaults to 128.
+        '''
         super().__init__()
         self.px = nn.Linear(d_x, proj_dim)
         self.py = nn.Linear(d_y, proj_dim)
@@ -123,7 +190,14 @@ class HSICProjector(nn.Module):
         return x, y
 
 class GatedMLPBlock(nn.Module):
-    def __init__(self, input_size, hidden_size, p=0.2):
+    def __init__(self, input_size, hidden_size, p=0.2, return_gate = False):
+        '''
+        Block of Gated MLP for gene expression prediction.
+        Args:
+            input_size (int): Size of the input feature vector.
+            hidden_size (int): Size of the hidden layer.
+            p (float, optional): Dropout probability. Defaults to 0.2.
+        '''
         super(GatedMLPBlock, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, input_size)
@@ -134,34 +208,81 @@ class GatedMLPBlock(nn.Module):
             nn.Sigmoid()
         )
         self.norm = nn.LayerNorm(input_size)
+        self.return_gate = return_gate
         self.dropout = nn.Dropout(p) # Dropout layer to prevent overfitting
 
     def forward(self, x):
+        '''
+        Forward pass for Gated MLP block, governed by a gating mechanism
+        Gating mechanism allows the model to adaptively control the information flow, 
+        enhancing its ability to capture complex yet sparse relationships.
+        The gating mechanism is defined as:
+            gate = sigmoid(W2 * GELU(W1 * x))
+        The output is computed as:
+            output = LayerNorm(x + gate * f(x))
+        where f(x) is the feedforward transformation.
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, input_size)
+        Returns:
+            Tensor: Output tensor of shape (batch_size, input_size) after applying the Gated MLP block.
+            If return_gate is True, also returns the gate tensor.
+        '''
         gate = self.gate(x)
         x_proj = self.fc2(self.dropout(F.gelu(self.fc1(x))))
+        if self.return_gate:
+            return self.norm(x + gate * x_proj), gate
         return self.norm(x + gate * x_proj)
 
 class PredictorGMLP(nn.Module):
     # Predicts the whole transcriptome from the image using a Gated MLP
-    def __init__(self, input_size, hidden_size, output_size, num_layers=3, dropout=0.2):
+    def __init__(self, input_size, hidden_size, output_size, num_layers=3, dropout=0.2, return_gate=False):
+        '''
+        Gated MLP based predictor for gene expression from image features.
+        Args:
+            input_size (int): Size of the input feature vector.
+            hidden_size (int): Size of the hidden layers.
+            output_size (int): Size of the output gene expression vector.
+            num_layers (int, optional): Number of Gated MLP blocks. Defaults to 3.
+            dropout (float, optional): Dropout probability. Defaults to 0.2.
+            return_gate (bool, optional): Whether to return the gates. Defaults to False.
+        '''
         super().__init__()
         self.layers = nn.ModuleList([
-            GatedMLPBlock(input_size, hidden_size, dropout)
+            GatedMLPBlock(input_size, hidden_size, dropout, return_gate)
             for _ in range(num_layers)
         ])
         self.output_proj = nn.Linear(input_size, output_size) #make gene expression prediction
+        self.return_gate = return_gate
 
-    def forward(self, x, return_gate = False):
-        for layer in self.layers:
-            x = layer(x)
-        if return_gate:
-            return x
+    def forward(self, x): 
+        '''
+        Forward pass for Gated MLP predictor
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, input_size)
+        Returns:
+            Tensor: Output tensor of shape (batch_size, output_size) representing predicted gene expression,
+                    or the gated output of shape (num_layers, batch_size, input_size) if return_gate is True.
+        '''
+        if self.return_gate:
+            gate_L = []
+            for layer in self.layers:
+                x, gate = layer(x)
+                gate_L.append(gate)
+            return torch.stack(gate_L) # Return list of gates from each layer, shape: (num_layers, batch_size, input_size)
         else:
+            for layer in self.layers:
+                x = layer(x)
             return self.output_proj(x)  # Final gene expression vector
 
 #! modules for SPAGHETTI
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels):
+        '''
+        Backbone of the SPAGHETTI generator network
+        Residual block with two convolutional layers and skip connection.
+        Args:
+            in_channels (int): Number of input and output channels for the residual block.
+        '''
         super(ResidualBlock, self).__init__()
         self.block = nn.Sequential(
             nn.ReflectionPad2d(1), # padding, keep the image size constant after next conv2d
@@ -178,8 +299,21 @@ class ResidualBlock(nn.Module):
 
 class SpaghettiGenerator(nn.Module):
     def __init__(self, in_channels, num_residual_blocks=9):
+        '''
+        SPAGHETTI generator network for image-to-image translation.
+        The architecture consists of:
+            - Initial convolutional layer
+            - Downsampling layers (2 layers)
+            - Transformation stage with residual blocks
+            - Upsampling layers (2 layers)
+            - Output convolutional layer
+        Args:
+            in_channels (int): Number of input and output channels for the images (e.g., 3 for RGB images).
+            num_residual_blocks (int, optional): Number of residual blocks in the transformation stage. Defaults to 9.
+        '''
         super(SpaghettiGenerator, self).__init__()
 
+        # SPAGHETTI image normalization
         self.normalization = v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
         # Inital Convolution  3*256*256 -> 64*256*256
         out_channels=64
@@ -248,10 +382,16 @@ class CellTypeClassifier(nn.Module):
     '''
     Classify the cell types from gene expression features.
     This is used to guide the training of the predictor to better at predicting the gene expression of the pcm
-    This is a simple feedforward neural network with two fully connected layers. 
+    This is a simple feedforward neural network with two fully connected layers and ReLU activations.
     No softmax activation is applied since it is used in a loss function that applies softmax internally (e.g., CrossEntropyLoss).
     '''
     def __init__(self, input_size, num_classes, hidden_size = 512):
+        '''
+        Args:
+            input_size (int): Size of the input feature vector.
+            num_classes (int): Number of cell type classes.
+            hidden_size (int, optional): Size of the hidden layers. Defaults to 512.
+        '''
         super(CellTypeClassifier, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
@@ -260,6 +400,14 @@ class CellTypeClassifier(nn.Module):
         self.dropout = nn.Dropout(0.2)  # Dropout layer to prevent overfitting
         
     def forward(self, x):
+        '''
+        Forward pass for cell type classifier
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, input_size)
+        Returns:
+            Tensor: Output tensor of shape (batch_size, num_classes) representing class scores for each cell type.
+                    Output is in the range of (-inf, inf) as no softmax is applied. Hence use CrossEntropyLoss for training.
+        '''
         x = F.relu(self.fc1(x))
         x = self.norm(x)
         x = self.dropout(x)

@@ -37,6 +37,10 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to train the model end-to-end. Defaults to False.
             num_cell_types (int, optional): 
                 Number of cell types in the dataset. Defaults to 0.
+            bio_feature_size (int, optional): 
+                Size of the biological feature representation. Defaults to 960.
+            domain_feature_size (int, optional): 
+                Size of the domain feature representation. Defaults to 64.
             up_marker_genes (dict[int, list[str]], optional): 
                 Mapping from cell type indices to lists of upregulated marker genes. Defaults to None.
             domain_weight (float, optional): 
@@ -55,6 +59,12 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to use across-cell information. Defaults to False.
             orthogonal_loss_weight (float, optional): 
                 Weight for orthogonal loss. Defaults to 0.0.
+            cosine_weight (float, optional):
+                Weight for cosine similarity loss. Defaults to 2.0.
+            if_ortho (bool, optional): 
+                Whether to use orthogonal translator. Defaults to True.
+            convert_for_pcm (bool, optional): 
+                Whether to convert PCM images. Defaults to True.
         '''
         super(GeneExpPredVisiumHD, self).__init__()
         # modules
@@ -281,7 +291,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             return x
 
     def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
-                     if_translate: bool=True, if_ortho: bool=True) -> torch.Tensor:
+                     if_translate: bool=True, if_ortho: bool=True) -> torch.Tensor: #todo: clean this up a bit, figure out how to visualize gates
         '''Compute gating vector for the input tensor.
 
         Args:
@@ -296,7 +306,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
 
         Returns:
             torch.Tensor: 
-                Gating vector of the input tensor in the shape of (batch_size, num_features).
+                Gating vector of the input tensor in the shape of (num_layers, batch_size, num_features).
         '''
         with torch.no_grad():
             if if_convert:
