@@ -51,6 +51,7 @@ def read_tsv(file_path: str):
 #* Main training function
 def train(train_loader, val_loader, 
           num_genes, converter, feature_extractor,
+          use_convert=True,
           num_cell_types=0, 
           end_to_end=False,
           up_marker_genes=None,
@@ -147,6 +148,7 @@ def train(train_loader, val_loader,
     print("Preparing training model ...")
     lit_model = GeneExpPredVisiumHD(num_genes, 
                                     converter, feature_extractor,
+                                    convert_for_pcm=use_convert,
                                     end_to_end=end_to_end,
                                     num_cell_types=num_cell_types,
                                     bio_feature_size=bio_feature_size,
@@ -189,7 +191,7 @@ def main():
     parser.add_argument('--visiumhd_dir', type=str, nargs="+", help='Directory containing the VisiumHD patches')
     parser.add_argument('--livecell_dir', type=str, nargs="+", help='Directory containing the LIVECell patches')
     parser.add_argument('--mtx_dir', type=str, nargs="+", help='Directory containing the mtx files')
-    parser.add_argument('--spaghetti_model', type=str, help='Path to the Spaghetti model')
+    parser.add_argument('--spaghetti_model', type=str, default=None, help='Path to the Spaghetti model')
     parser.add_argument('--end_to_end', action='store_true', help='If set, train the model end to end including SPAGHETTI')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size for training')
@@ -209,11 +211,13 @@ def main():
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     parser.add_argument('--ablation_mode', action='store_true', 
                         help='If set, the model will be trained with ablation with removed marker genes')
+    parser.add_argument('--no_convert_for_pcm', action='store_true', 
+                        help='If set, the model will be trained without using the converter for PCM images')
     parser.add_argument('--feature_extractor', type=str, default="phikon-2", 
                         help='Feature extractor model to use') #! todo - implement other feature extractors
-    parser.add_argument('--bio_feature_size', type=int, default=768, 
+    parser.add_argument('--bio_feature_size', type=int, default=960, 
                         help='The size of the biological feature after disentanglement')
-    parser.add_argument('--domain_feature_size', type=int, default=256, 
+    parser.add_argument('--domain_feature_size', type=int, default=64, 
                         help='The size of the domain feature after disentanglement')
     args = parser.parse_args()
     print("Starting the training script with the following arguments:")
@@ -236,8 +240,10 @@ def main():
     image_processor = pre_processing_phikon()
     feature_extractor = (image_processor, extractor)
     # prepare spaghetti model
-    spaghetti = init_spaghetti(args.spaghetti_model)
-    converter = spaghetti
+    if args.spaghetti_model:
+        converter = init_spaghetti(args.spaghetti_model)
+    else:
+        converter = None
     # start training
     train(train_loader, val_loader, 
           num_genes=dataset.datasets[0].num_genes,
@@ -254,6 +260,7 @@ def main():
           marker_gene_loss_weight=args.marker_gene_loss_weight,
           marker_across_cell=args.marker_across_cell,
           converter=converter,
+          use_convert=not args.no_convert_for_pcm,
           feature_extractor=feature_extractor, 
           domain_weight=args.domain_weight, coral_loss_weight=args.coral_loss_weight,
           cosine_weight=args.cosine_weight,
