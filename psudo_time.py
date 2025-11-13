@@ -10,6 +10,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import argparse
 import os
+import altair as alt
+## plotting settings
+if True:  # In order to bypass isort when saving
+    from altairThemes import altairThemes
+alt.themes.register("publishTheme", altairThemes.publishTheme)
+alt.themes.enable("publishTheme")
 
 def pseudotime_analysis_and_plot(array, labels, output_dir):
     '''
@@ -57,6 +63,19 @@ def pseudotime_analysis_and_plot(array, labels, output_dir):
     plt.title('Pseudotime Analysis of Confluency Data')
     plt.savefig(os.path.join(output_dir, "pseudotime_confluency.png"), dpi=300, bbox_inches='tight')
     plt.close()
+
+    # plot an altair tick plot
+    df_altair = pd.DataFrame({'Cell_Index': range(len(ordered_pseudotime)),
+                              'Pseudotime': ordered_pseudotime,
+                              'Label': ordered_labels})
+    chart = alt.Chart(df_altair).mark_tick(size=10).encode(
+        x='Cell_Index',
+        y='Pseudotime',
+        color=alt.Color('Label', scale=alt.Scale(scheme='viridis'))
+    ).properties(
+        title='Pseudotime',
+    ).interactive()
+    chart.save(os.path.join(output_dir, 'pseudotime_confluency_altair.html'))
 
     print("Pseudotime analysis completed and plot saved.")
 
@@ -108,6 +127,41 @@ def compute_marker_gene_scores(array, labels, pseudotime_array, gene_set, gene_n
     # save marker scores
     pd.DataFrame({'Pseudotime': pseudotime_array, 'Marker_Score': marker_scores}).to_csv(
         os.path.join(output_dir, f"marker_scores_{gene_set_name}.csv"), index=False)
+    
+    # plot a altair scatter plot
+    df_altair = pd.DataFrame({'Pseudotime': pseudotime_array,
+                              'Marker_Score': marker_scores,
+                              'Label': labels})
+    chart = alt.Chart(df_altair).mark_circle(size=30).encode(
+        x='Pseudotime',
+        y='Marker_Score',
+        color=alt.Color('Label', scale=alt.Scale(scheme='viridis'))
+    ).properties(
+        title=f'{gene_set_name} Marker Gene Score vs Pseudotime',
+    ).interactive()
+    chart.save(os.path.join(output_dir, f'marker_score_vs_pseudotime_{gene_set_name}_altair.html'))
+
+    # plot a box plot of average marker score per label and avg pseudotime per label
+    df_box = pd.DataFrame({'Label': labels,
+                           'Marker_Score': marker_scores,
+                           'Pseudotime': pseudotime_array})
+    chart = alt.Chart(df_box).mark_boxplot().encode(
+        x='Label',
+        y='Marker_Score',
+        color='Label'
+    ).properties(
+        title=f'{gene_set_name} Marker Gene Score Distribution by Label'
+    ).interactive()
+    chart.save(os.path.join(output_dir, f'marker_score_boxplot_{gene_set_name}.html'))
+
+    chart = alt.Chart(df_box).mark_boxplot().encode(
+        x='Label',
+        y='Pseudotime',
+        color='Label'
+    ).properties(
+        title='Pseudotime Distribution by Label'
+    ).interactive()
+    chart.save(os.path.join(output_dir, f'pseudotime_boxplot_{gene_set_name}.html'))
     
     print("Marker gene scores computed and plot saved.")
 
