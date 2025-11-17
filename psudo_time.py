@@ -17,6 +17,14 @@ if True:  # In order to bypass isort when saving
 alt.themes.register("publishTheme", altairThemes.publishTheme)
 alt.themes.enable("publishTheme")
 
+def wilcoxon_rank_sum_test(group1, group2):
+    '''
+    Perform Wilcoxon rank-sum test between two groups.
+    '''
+    from scipy.stats import ranksums
+    stat, p_value = ranksums(group1, group2)
+    return stat, p_value
+
 def pseudotime_analysis_and_plot(array, labels, output_dir):
     '''
     Run pseudotime analysis and plot the results.
@@ -64,18 +72,37 @@ def pseudotime_analysis_and_plot(array, labels, output_dir):
     plt.savefig(os.path.join(output_dir, "pseudotime_confluency.png"), dpi=300, bbox_inches='tight')
     plt.close()
 
-    # plot an altair tick plot
+    # plot an altair tick plot, where only along x is pseudotime, y is just a constant
     df_altair = pd.DataFrame({'Cell_Index': range(len(ordered_pseudotime)),
                               'Pseudotime': ordered_pseudotime,
                               'Label': ordered_labels})
     chart = alt.Chart(df_altair).mark_tick(size=10).encode(
-        x='Cell_Index',
-        y='Pseudotime',
+        x='Pseudotime',
+        y=alt.value(1),
         color=alt.Color('Label', scale=alt.Scale(scheme='viridis'))
     ).properties(
         title='Pseudotime',
     ).interactive()
     chart.save(os.path.join(output_dir, 'pseudotime_confluency_altair.html'))
+
+    chart = alt.Chart(df_altair).mark_boxplot().encode(
+        x=alt.X('Label', sort=np.unique(labels).tolist(), axis=alt.Axis(labelAngle=-45)),
+        y='Pseudotime',
+        color='Label'
+    ).properties(
+        title='Pseudotime Distribution by Label'
+    ).interactive()
+    chart.save(os.path.join(output_dir, 'pseudotime_boxplot.html'))
+
+    # perform Wilcoxon rank-sum test between each pair of labels for pseudotime
+    with open(os.path.join(output_dir, 'pseudotime_wilcoxon.txt'), 'w') as f:
+        f.write("Wilcoxon Rank-Sum Test Results for Pseudotime:\n")
+        for i in range(len(unique_labels)):
+            for j in range(i + 1, len(unique_labels)):
+                group1 = pseudotime_array[labels == unique_labels[i]]
+                group2 = pseudotime_array[labels == unique_labels[j]]
+                stat, p_val = wilcoxon_rank_sum_test(group1, group2)
+                f.write(f"{unique_labels[i]} vs {unique_labels[j]}: statistic={stat:.4f}, p-value={p_val:.4e}\n")
 
     print("Pseudotime analysis completed and plot saved.")
 
@@ -132,13 +159,17 @@ def compute_marker_gene_scores(array, labels, pseudotime_array, gene_set, gene_n
     df_altair = pd.DataFrame({'Pseudotime': pseudotime_array,
                               'Marker_Score': marker_scores,
                               'Label': labels})
-    chart = alt.Chart(df_altair).mark_circle(size=30).encode(
+    chart = alt.Chart(df_altair).mark_circle().encode(
         x='Pseudotime',
         y='Marker_Score',
         color=alt.Color('Label', scale=alt.Scale(scheme='viridis'))
     ).properties(
         title=f'{gene_set_name} Marker Gene Score vs Pseudotime',
     ).interactive()
+    # fit a regression line
+    regression = chart.transform_regression('Pseudotime', 'Marker_Score').mark_line(color='red').interactive()
+    chart = chart + regression
+    chart = chart.interactive()
     chart.save(os.path.join(output_dir, f'marker_score_vs_pseudotime_{gene_set_name}_altair.html'))
 
     # plot a box plot of average marker score per label and avg pseudotime per label
@@ -146,7 +177,7 @@ def compute_marker_gene_scores(array, labels, pseudotime_array, gene_set, gene_n
                            'Marker_Score': marker_scores,
                            'Pseudotime': pseudotime_array})
     chart = alt.Chart(df_box).mark_boxplot().encode(
-        x='Label',
+        x=alt.X('Label', sort=np.unique(labels).tolist(), axis=alt.Axis(labelAngle=-45)),
         y='Marker_Score',
         color='Label'
     ).properties(
@@ -154,14 +185,18 @@ def compute_marker_gene_scores(array, labels, pseudotime_array, gene_set, gene_n
     ).interactive()
     chart.save(os.path.join(output_dir, f'marker_score_boxplot_{gene_set_name}.html'))
 
-    chart = alt.Chart(df_box).mark_boxplot().encode(
-        x='Label',
-        y='Pseudotime',
-        color='Label'
-    ).properties(
-        title='Pseudotime Distribution by Label'
-    ).interactive()
-    chart.save(os.path.join(output_dir, f'pseudotime_boxplot_{gene_set_name}.html'))
+    # perform Wilcoxon rank-sum test between each pair of labels for marker scores
+    unique_labels = np.unique(labels)
+    with open(os.path.join(output_dir, f'marker_score_wilcoxon_{gene_set_name}.txt'), 'w') as f:
+        f.write("Wilcoxon Rank-Sum Test Results for Marker Gene Scores:\n")
+        for i in range(len(unique_labels)):
+            for j in range(i + 1, len(unique_labels)):
+                group1 = marker_scores[labels == unique_labels[i]]
+                group2 = marker_scores[labels == unique_labels[j]]
+                stat, p_val = wilcoxon_rank_sum_test(group1, group2)
+                f.write(f"{unique_labels[i]} vs {unique_labels[j]}: statistic={stat:.4f}, p-value={p_val:.4e}\n")
+
+
     
     print("Marker gene scores computed and plot saved.")
 
