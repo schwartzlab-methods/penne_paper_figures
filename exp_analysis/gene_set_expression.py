@@ -5,18 +5,73 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
 import os
+from itertools import chain
 # from functools import reduce
 from tqdm import tqdm
+import altair as alt
+## plotting settings
+if True:  # In order to bypass isort when saving
+    from altairThemes import altairThemes
+alt.themes.register("publishTheme", altairThemes.publishTheme)
+alt.themes.enable("publishTheme")
 
-def read_tsv(file_path):
+def permutation_test(group1, group2, num_permutations=100000):
+    """
+    Perform a two-sided permutation test to compare the means of two groups.
+
+    Parameters:
+    - group1: array-like, first group of data
+    - group2: array-like, second group of data
+    - num_permutations: int, number of permutations to perform
+
+    Returns:
+    - p_value: float, the p-value from the permutation test
+    """
+    np.random.seed(42)
+
+    observed_diff = abs(np.mean(group1) - np.mean(group2))
+    print("Observed difference in means:", observed_diff)
+    combined = np.concatenate([group1, group2])
+    count = 0
+
+    for _ in range(num_permutations):
+        np.random.shuffle(combined)
+        new_group1 = combined[:len(group1)]
+        new_group2 = combined[len(group1):]
+        new_diff = abs(np.mean(new_group1) - np.mean(new_group2))
+        if new_diff >= observed_diff:
+            count += 1
+
+    p_value = count / num_permutations
+    return p_value
+
+def read_tsv(file_paths):
+    '''
+    Read multile .gmt files in a tsv format and combine them into a single dataframe
+    Shape: number of genes x number of enrichment sets
+    '''
+    print("Reading gene set files...")
     df_all = pd.DataFrame()
-    for each in file_path:
+    for each in file_paths:
         with open(each, 'r', encoding='utf-8') as f:
             lines = [line.strip().split('\t') for line in f]
-        df = pd.DataFrame(lines).T #number of genes x number of cells
+        df = pd.DataFrame(lines).T #number of genes x number of enrichment sets
         df.columns = [cell.lower().split("-")[0] for cell in df.iloc[0].tolist()]  # set the first row as header
         df = df[2:]  # remove the first row and description
         df_all = pd.concat([df_all, df], axis=1, join="outer")
+    # combine the columns with the same name by taking the union of their values
+    # df_all = df_all.groupby(df_all.columns, axis=1).agg(lambda x: pd.Series(x).explode().unique().tolist())
+    df_all = (
+        df_all.groupby(df_all.columns, axis=1)
+            .apply(lambda df:
+                    pd.Series(df.values.ravel())
+                    .explode()
+                    .dropna()
+                    .unique()
+                    .tolist())
+    ).to_frame().T
+
+    print("Number of enrichment sets:", df_all.shape[1])
     return df_all
 
 def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gene_sets, out):
@@ -35,6 +90,10 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
     label_series = pd.Series(cell_labels, name="cell_type")
     
     results = []
+
+    # track summary stats for all the values tested
+    marker_in_cell = []
+    marker_across_cell = []
 
     for cell_type, gene_set in tqdm(enriched_gene_sets.items()):
         # Filter for genes in the set that exist in gene_names
@@ -74,11 +133,19 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
             "p_value_within_celltype": pval_within_celltype
         })
 
+        # normalization for combining
+        current_mean_all = np.concatenate([target_scores, background_scores]).mean()
+        current_std_all = np.concatenate([target_scores, background_scores]).std()
+        z_norm_in_type = (target_scores - current_mean_all) / current_std_all
+        z_norm_elsewhere = (background_scores - current_mean_all) / current_std_all
+        marker_in_cell.append(z_norm_in_type)
+        marker_across_cell.append(z_norm_elsewhere)
+
         results_df = pd.DataFrame(results)
         results_df["FDR_cross"] = results_df["p_value_cross_celltype"] * len(results_df)  # Bonferroni correction
         results_df["FDR_within"] = results_df["p_value_within_celltype"] * len(results_df)  # Bonferroni correction
         
-        # plot violin plot
+        # plot violin plot across cell types (ie: marker of this cell type in this cell type vs in other cell types)
         plt.figure(figsize=(8, 8))
         sns.violinplot(
             x=label_series.isin([cell_type]).map({True: cell_type, False: "Other"}),
@@ -92,7 +159,21 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         plt.tight_layout()
         plt.savefig(os.path.join(out, f"{cell_type}_gene_set_mean_exp_across.png"))
         plt.close()
+        # plot altair box plot
+        plot_df = pd.DataFrame({
+            "Mean Log2-Normalized Expression of Gene Set": module_score.tolist(),
+            "Cell Type": label_series.isin([cell_type]).map({True: cell_type, False: "Other"})
+        })
+        box_plot = alt.Chart(plot_df).mark_boxplot().encode(
+            y='Mean Log2-Normalized Expression of Gene Set:Q',
+            x=alt.X('Cell Type:N', sort=[cell_type, "Other"], axis=alt.Axis(labelAngle=-45)),
+            color='Cell Type:N'
+        ).properties(
+            title=f"Mean Log2-Normalized Expression for {cell_type} Marker Genes",
+        ).interactive()
+        box_plot.save(os.path.join(out, f"{cell_type}_gene_set_mean_exp_across_altair.html"))
 
+        # plot violin plot within cell type
         plt.figure(figsize=(8, 8))
         sns.violinplot(
             x=["Marker"]*len(target_scores.tolist()) + ["Other"]*len(complement_scores.tolist()),
@@ -107,9 +188,46 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         plt.savefig(os.path.join(out, f"{cell_type}_gene_set_mean_exp_within.png"))
         plt.close()
 
-
+        # plot altair box plot
+        plot_df = pd.DataFrame({
+            "Mean Log2-Normalized Expression of Gene Set": target_scores.tolist()+complement_scores.tolist(),
+            "Type": ["Marker"]*len(target_scores.tolist()) + ["Other"]*len(complement_scores.tolist())
+        })
+        box_plot = alt.Chart(plot_df).mark_boxplot().encode(
+            y='Mean Log2-Normalized Expression of Gene Set:Q',
+            x=alt.X('Type:N', sort=["Marker", "Other"], axis=alt.Axis(labelAngle=-45)),
+            color='Type:N'
+        ).properties(
+            title=f"Mean Log2-Normalized Expression for {cell_type} Marker Genes",
+        ).interactive()
+        box_plot.save(os.path.join(out, f"{cell_type}_gene_set_mean_exp_within_altair.html"))
     results_df = pd.DataFrame(results)
     results_df.to_csv(os.path.join(out, "gene_set_enrichment.csv"))
+
+    # plot summary boxplot of marker expression with altair
+    if len(enriched_gene_sets.keys()) < 2:
+        print("Not enough cell types for summary plot.")
+    else:
+        marker_in_cell_concat = np.concatenate(marker_in_cell).ravel()
+        marker_across_cell_concat = np.concatenate(marker_across_cell).ravel()    
+        summary_melted = pd.DataFrame({
+            "mean_z_normalized_expression": np.concatenate([marker_in_cell_concat, marker_across_cell_concat]),
+            "context": ["within_cell_type"]*len(marker_in_cell_concat) + ["across_cell_type"]*len(marker_across_cell_concat)
+        })
+        box_plot = alt.Chart(summary_melted).mark_boxplot().encode(
+            y='mean_z_normalized_expression:Q',
+            x=alt.X('context:N', sort=["within_cell_type", "across_cell_type"], axis=alt.Axis(labelAngle=-45)),
+            color='context:N'
+        ).properties(
+            title="Mean Z-Normalized Expression of Marker Genes",
+        ).interactive()
+        box_plot.save(os.path.join(out, f"summary_marker_expression_boxplot.html"))
+    
+        # stats test for summary plot
+        p_value_summary = permutation_test(marker_in_cell_concat, marker_across_cell_concat)
+        print("Permutation test p-value for summary marker expression:", p_value_summary)
+
+    return results_df
 
 def main():
     np.random.seed(42)
@@ -156,7 +274,9 @@ def main():
 
     # select only the cell type of interest
     enriched_gene_sets = {
-        celltype: list(set(signature[celltype].dropna().values.ravel().tolist())) 
+        celltype: sorted(set(chain.from_iterable(
+                    signature[celltype].dropna().tolist()
+                )))
                     for celltype in celltype_of_interest if celltype in signature.columns
     }
     # enriched_gene_sets = {
