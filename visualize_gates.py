@@ -3,7 +3,6 @@ Visualize the gating vector from gated MLP for a set of genes
 '''
 
 from dataset import ShaneSeqCellTypeDataset
-import pytorch_lightning as pl
 from model import GeneExpPredVisiumHD
 import torch
 from torch.utils.data import DataLoader
@@ -16,15 +15,15 @@ import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
 import pandas as pd
-from scipy.stats import spearmanr, fisher_exact
-# from sklearn.feature_selection import mutual_info_regression
-from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.metrics import r2_score
-import umap
-import torchvision.utils
+from scipy.stats import spearmanr
+import altair as alt
+
+## plotting settings
+if True:  # In order to bypass isort when saving
+    from altairThemes import altairThemes
+alt.themes.register("publishTheme", altairThemes.publishTheme)
+alt.themes.enable("publishTheme")
 
 def main():
     parser = argparse.ArgumentParser(description="Validate GFP levels")
@@ -160,7 +159,9 @@ def main():
                 gene_gate_corr[gene_idx, dim_idx] = corr
 
         # cluster genes based on gate correlation profiles
-        plt.figure(figsize=(12,10))
+        plt.figure(figsize=(18,18))
+        # make text font size smaller for better visualization
+        sns.set(font_scale=0.5)
         cg = sns.clustermap(gene_gate_corr, cmap='bwr', center=0, yticklabels=genes_to_use)
         plt.xlabel("Gate Dimension")
         plt.ylabel("Genes")
@@ -178,6 +179,48 @@ def main():
         gene_cluster_df = pd.DataFrame({"Gene": genes_to_use, "Cluster": clusters})
         gene_cluster_df.to_csv(os.path.join(args.output_dir, "gene_clusters.csv"), index=False)
         print("Gene clusters saved to ", os.path.join(args.output_dir, "gene_clusters.csv"))
+        # perform enrichment analysis with enrichR for each cluster
+        print("Performing enrichment analysis for each gene cluster...")
+        import gseapy as gp
+        clusters = np.unique(clusters)
+        final_enrichment_results = {}
+        for cluster_id in tqdm(clusters):
+            cluster_genes = gene_cluster_df[gene_cluster_df["Cluster"]==cluster_id]["Gene"].values.tolist()
+            if len(cluster_genes) < 2:
+                print(f"Cluster {cluster_id} has less than 2 genes. Skipping enrichment analysis.")
+                continue
+            enr = gp.enrichr(gene_list=cluster_genes,
+                             gene_sets='GO_Cellular_Component_2025',
+                             outdir=None, # do not save to disk
+                             background=genes_to_use.tolist(),
+                            )
+            final_enrichment_results[cluster_id] = enr.results
+            # save the enrichment results to csv
+            enr.results.to_csv(os.path.join(args.output_dir, f"gene_cluster_{cluster_id}_enrichment.csv"), index=False)
+
+        # plot top enriched terms for each cluster in one horizontal bar plot figure with Altair
+        # y axis: top terms grouped by cluster id, x axis: combined score
+        all_terms = []
+        for cluster_id, df in final_enrichment_results.items():
+            df = df[df["P-value"] < 0.05]
+            # only keep infinity if there are more than two items in Gene
+            df = df[df["Genes"].str.split(";").apply(len) >= 2]
+            # replace inf with a fixed large number (1.1 times the max finite combined score)
+            top_terms = df.sort_values(by="Combined Score", ascending=False)# .head(2)
+            top_terms["Cluster"] = cluster_id
+            all_terms.append(top_terms)
+        all_terms_df = pd.concat(all_terms, axis=0)
+        max_finite_score = all_terms_df.loc[np.isfinite(all_terms_df["Combined Score"]), "Combined Score"].max()
+        all_terms_df["Combined Score"] = all_terms_df["Combined Score"].replace(np.inf, 1.1 * max_finite_score)
+        chart = alt.Chart(all_terms_df).mark_bar().encode(
+            x=alt.X('Combined Score:Q', title='Combined Score'),
+            y=alt.Y('Term:N', title='', sort=all_terms_df["Cluster"].tolist()), # by cluster
+            color=alt.Color('Cluster:N', title='Cluster ID')
+        ).interactive()
+        # set labellimit to 0 to show full term names
+        chart = chart.configure_axisY(labelLimit=0)
+        chart.save(os.path.join(args.output_dir, "gene_cluster_enrichment.html"))
+        print("Gene cluster enrichment plot saved to ", os.path.join(args.output_dir, "gene_cluster_enrichment.html"))
         
 
 if __name__ == "__main__":
