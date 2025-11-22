@@ -169,7 +169,7 @@ def main():
         plt.savefig(os.path.join(args.output_dir, "gene_gate_correlation_heatmap_last_layer.svg"))
         plt.close()
         print("Gene x Gate correlation heatmap saved to ", args.output_dir)
-        # save the linkage matrix
+        # save the linkage matrix for genes
         linkage = cg.dendrogram_row.linkage
         np.save(os.path.join(args.output_dir, "gene_gate_correlation_linkage.npy"), linkage)
         print("Gene linkage matrix saved to ", os.path.join(args.output_dir, "gene_gate_correlation_linkage.npy"))
@@ -179,7 +179,23 @@ def main():
         gene_cluster_df = pd.DataFrame({"Gene": genes_to_use, "Cluster": clusters})
         gene_cluster_df.to_csv(os.path.join(args.output_dir, "gene_clusters.csv"), index=False)
         print("Gene clusters saved to ", os.path.join(args.output_dir, "gene_clusters.csv"))
-        # perform enrichment analysis with enrichR for each cluster
+        # for each cluster, get the top 50 features with highest average correlation
+        top_features = []
+        for cluster_id in np.unique(clusters):
+            cluster_gene_indices = np.where(clusters==cluster_id)[0]
+            cluster_gene_corrs = gene_gate_corr[cluster_gene_indices, :] # shape: num_genes_in_cluster, gate_dim
+            avg_corrs = np.mean(cluster_gene_corrs, axis=0) # shape: gate_dim
+            top_gate_indices = np.argsort(-np.abs(avg_corrs))[:50] # top 50 features with highest absolute average correlation
+            for gate_idx in top_gate_indices:
+                top_features.append({
+                    "Cluster": cluster_id,
+                    "Gate Dimension": gate_idx,
+                    "Average Correlation": avg_corrs[gate_idx]
+                })
+        top_features_df = pd.DataFrame(top_features)
+        top_features_df.to_csv(os.path.join(args.output_dir, "top_gate_features_per_cluster.csv"), index=False)
+        print("Top gate features per cluster saved to ", os.path.join(args.output_dir, "top_gate_features_per_cluster.csv"))
+        # perform enrichment analysis with enrichr for each cluster
         print("Performing enrichment analysis for each gene cluster...")
         import gseapy as gp
         clusters = np.unique(clusters)
