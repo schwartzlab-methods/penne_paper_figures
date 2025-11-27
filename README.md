@@ -1,2 +1,2 @@
-# he_pcm_to_exp
-Predict the gene expression from H&amp;E and PCM images
+# PENNE - PCM Expression Neural Network Estimator
+Predict the gene expression from phase contrast microscopy images
