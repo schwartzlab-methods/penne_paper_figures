@@ -43,9 +43,7 @@ def plot_umap(data, labels, save_dir, exp_name, extractor,
 def tmc_plot(data, labels, save_dir, use_neg_modularity=False):
     adata = ad.AnnData(X=data, obs=pd.DataFrame({"cell_type": labels.tolist()}))
     tmc_obj = tmc(adata, os.path.join(save_dir, "tmc_output"))
-    if use_neg_modularity:
-        tmc_obj.eps = -1e10 # set the modularity to be negative
-    tmc_obj.run_spectral_clustering()
+    tmc_obj.run_spectral_clustering(modularity_threshold=-1e9 if use_neg_modularity else 1e-9)
     tmc_obj.store_outputs(
         cell_ann_col="cell_type",
     )

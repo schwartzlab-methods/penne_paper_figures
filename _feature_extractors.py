@@ -69,7 +69,7 @@ def pre_processing_phikon(model=None):
         ])
         return lambda batch: torch.stack([transform(x) for x in batch])
 
-def owkin_features(model, device, image_processor, x, return_attn = False):
+def owkin_features(model, device, image_processor, x, return_attn = False, return_embedding = False):
     model.to(device)
     model.eval()
     with torch.no_grad():
@@ -77,7 +77,9 @@ def owkin_features(model, device, image_processor, x, return_attn = False):
         todytpe = v2.ToDtype(torch.float32)#, scale=True)
         x = todytpe(x)
         inputs = image_processor(x, return_tensors="pt", do_rescale=False)
-        outputs = model(**inputs.to(device),output_attentions=return_attn)
+        outputs = model(**inputs.to(device),output_attentions=return_attn,output_hidden_states=return_embedding)
+    if return_embedding: # return the pathch embeddings
+        return outputs.hidden_states[0][:,1:,:]
     # return last layer attention and full embedding
     # shape of attention is (batch_size, num_heads, seq_length, seq_length)
     # shape of extracted is (batch_size, seq_length, hidden_size)

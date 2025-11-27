@@ -421,7 +421,7 @@ class ShaneSeqDataset(Dataset):
             exp_dir = os.path.join(path, exp, "Phase")
             if os.path.isdir(exp_dir):
                 # grab only the 02d images, since only those have sequencing data
-                self.experiments.extend([f"{exp}_{img[9]}" for img in os.listdir(exp_dir) if "02d" in img])
+                self.experiments.extend([f"{exp}_{img}" for img in os.listdir(exp_dir) if "02d" in img])
                 self.imgs.extend([os.path.join(exp_dir, img) for img in os.listdir(exp_dir) if "02d" in img])
 
         self.transform = v2.Compose([
@@ -472,14 +472,19 @@ class ShaneSeqCellTypeDataset(Dataset):
     In this dataset, there are phase images and green chanel GFP images
     The more GFP, the more likely the cell is MCF10A. Otherwise, the cell is HCT116.
     The dataset will return the image and the green channel value (as a percentage of the total image size)
+
+    This dataset class can also be used to estimate the amount of mitotic cells in the image if the GFP is a mitotic marker.
     '''
-    def __init__(self, path: str):
+    def __init__(self, path, load_mitotitc: bool = False):
         super(ShaneSeqCellTypeDataset, self).__init__()
         self.path = path
         self.imgs = []
         self.image_names = []
         self.gfp_imgs = []
-        self._load_data()
+        if load_mitotitc:
+            self._load_data_coculture_mitotic()
+        else:
+            self._load_data_coculture()
         self.transform = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32),
@@ -503,13 +508,23 @@ class ShaneSeqCellTypeDataset(Dataset):
         patches = patches.reshape(-1, C, patch_size, patch_size)
         return patches
 
-    def _load_data(self):
+    def _load_data_coculture(self):
         # Load images and GFP values from the dataset
+        # this case, path is a str to the coculture directory
         for img in os.listdir(os.path.join(self.path, "Phase")):
             # if "02d" in img: # only load 02d images
             self.imgs.append(os.path.join(self.path, "Phase", img))
             # compute GFP values
             self.gfp_imgs.append(os.path.join(self.path, "GFP", img))
+            self.image_names.append(img)
+    
+    def _load_data_coculture_mitotic(self):
+        # self.path is a tuple of (phase_path, gfp_path)
+        img_path = self.path[0]
+        gfp_path = self.path[1]
+        for img in os.listdir(img_path):
+            self.imgs.append(os.path.join(img_path, img))
+            self.gfp_imgs.append(os.path.join(gfp_path, img))
             self.image_names.append(img)
 
     @staticmethod
@@ -578,6 +593,7 @@ class ShaneSeqCellTypeDataset(Dataset):
     @staticmethod
     def otsu_threshold(values, nbins=256):
         """Compute Otsu threshold for 1D values in [0,1]."""
+        values = torch.tensor(values) # ensure tensor
         if values.numel() == 0:
             return 1.0
         hist = torch.histc(values, bins=nbins, min=0.0, max=1.0)
@@ -587,7 +603,7 @@ class ShaneSeqCellTypeDataset(Dataset):
         mu_t = mu[-1]
         sigma_b = (mu_t*omega - mu)**2 / (omega*(1-omega) + 1e-9)
         idx = torch.argmax(sigma_b)
-        return (idx.float()+0.5)/nbins
+        return ((idx.float()+0.5)/nbins).item()
 
     def segment_cells_from_phase(self, phase_imgs, sigma=3):
         """
@@ -607,11 +623,71 @@ class ShaneSeqCellTypeDataset(Dataset):
         for i in range(phase_imgs.shape[0]):
             thr = self.otsu_threshold(inv[i,0].flatten())
             mask = (inv[i,0] >= thr)
-            # optional: morphological cleanup
+            # morphological cleanup
             mask = torch.nn.functional.max_pool2d(
                 mask[None,None].float(), 3, stride=1, padding=1).bool()[0,0]
             masks.append(mask)
         return torch.stack(masks, dim=0)  # (B,H,W)
+
+    def _extract_gfp_value_threshold(self, batch_rgb: torch.Tensor, phase_imgs: torch.Tensor):
+        """
+        batch_rgb: (B,3,H,W) in [0,1]
+        returns: (B,) tensor of % bright green area
+        """
+        batch_size = batch_rgb.shape[0]
+        gfp_vals = []
+        # cell_masks = self.segment_cells_from_phase(phase_imgs)
+        thr = 100 / 255.0  # fixed threshold for GFP, select only very bright areas
+        for i in range(batch_size):
+            gfp_img = batch_rgb[i].cpu().numpy() # (3,H,W)
+            # get only the green channel
+            gfp_img = gfp_img[1,:,:]  # (H,W)
+            # compute simple threshold
+            bright_mask = gfp_img >= thr
+            # # estimate % area of bright green cells
+            # cell_mask = cell_masks[i].cpu().numpy()
+            # cell_pixels = cell_mask.sum()
+            # bright_pixels = (bright_mask & cell_mask).sum()
+            # percent = bright_pixels / (cell_pixels + 1e-9)
+            percent = bright_mask.sum() / (gfp_img.size + 1e-9)
+            gfp_vals.append(percent)
+        return torch.tensor(gfp_vals, device=batch_rgb.device) #shape (B,)
+
+    def _extract_gfp_value_filter(self, batch_rgb: torch.Tensor, phase_imgs: torch.Tensor):
+        from scipy.ndimage import gaussian_filter
+        from skimage.restoration import rolling_ball
+        from skimage import exposure
+        from skimage.filters import apply_hysteresis_threshold
+
+        batch_size = batch_rgb.shape[0]
+        gfp_vals = []
+        cell_masks = self.segment_cells_from_phase(phase_imgs)
+        for i in range(batch_size):
+            gfp_img = batch_rgb[i].cpu().numpy() # (3,H,W)
+            # get only the green channel
+            gfp_img = gfp_img[1,:,:]  # (H,W)
+            # #* compute illumination-corrected GFP
+            # illum = gaussian_filter(gfp_img, sigma=50)
+            # gfp_corr = gfp_img / (illum + 1e-6)
+            # gfp_corr = np.clip(gfp_corr, 0, None)
+            # # Detect bright mitotic spots
+            # thr = self.otsu_threshold(gfp_corr.flatten())
+            # mitotic_mask = gfp_corr > (thr * 1.4)   # 1.4× Otsu = high-specificity threshold
+            #* uses a rolling ball algorithm for background subtraction
+            background = rolling_ball(gfp_img, radius=50)
+            img_corr = gfp_img - background
+            img_corr = np.clip(img_corr, 0, None)
+            img_norm = exposure.rescale_intensity(img_corr, in_range="image", out_range=(0, 1))
+            th_high = np.percentile(img_norm, 99.2) # high-specificity threshold
+            th_low = th_high * 0.5
+            mitotic_mask = apply_hysteresis_threshold(img_norm, th_low, th_high)
+            # estimate % area of mitotic cells
+            cell_mask = cell_masks[i].cpu().numpy()
+            cell_pixels = cell_mask.sum()
+            mitotic_pixels = (mitotic_mask & cell_mask).sum()
+            percent = mitotic_pixels / (cell_pixels + 1e-9)
+            gfp_vals.append(percent)
+        return torch.tensor(gfp_vals, device=batch_rgb.device) #shape (B,)
 
     def _extract_gfp_value(self, batch_rgb: torch.Tensor, phase_imgs: torch.Tensor, 
                            sat_thresh=0.3, a_thresh=-6) -> float:
@@ -669,8 +745,10 @@ class ShaneSeqCellTypeDataset(Dataset):
         gfp_patches = self.extract_full_patches(gfp_img)
         # compute the gfp value for each patch
         # gfp_values = self._extract_gfp_value(gfp_patches, img_patches).view(-1, 1)
-        gfp_values = self.mean_gfp_intensity(gfp_patches, img_patches).view(-1, 1)
-        return img_patches, (gfp_values, img_name)
+        # gfp_values = self.mean_gfp_intensity(gfp_patches, img_patches).view(-1, 1)
+        # gfp_values = self._extract_gfp_value_filter(gfp_patches, img_patches).view(-1, 1)
+        gfp_values = self._extract_gfp_value_threshold(gfp_patches, img_patches).view(-1, 1)
+        return img_patches, (gfp_values, img_name, gfp_patches)
     
 #* Shane's seuqnecing for confluency
 class ShaneSeqConfluencyDataset(Dataset):
@@ -733,3 +811,56 @@ class ShaneSeqConfluencyDataset(Dataset):
         imgs = self.extract_full_patches(img)  # (num_patches, 3, 256, 256)
         return imgs, (torch.tensor([0 if exp_name == "day0" else 1 if exp_name == "day1" else 2]), 
                       img_path, self.cell_types[idx], exp_name, f"{self.cell_types[idx]}_{exp_name}")
+
+#* mitosis dataset
+class MitoticDataset(Dataset):
+    '''
+    Dataset for external mitosis images from the Asmar et al. (2024) dataset.
+    The mitotic percentage is calculated using mitosis_inferenced images, where
+    mitotic_per = (number of 2 + 3) / (number of 1 + 2 + 3)
+    '''
+    def __init__(self, path: str):
+        super(MitoticDataset, self).__init__()
+        self.imgs = [os.path.join(path, "phase", img) for img in os.listdir(os.path.join(path, "phase")) if img.endswith(".tif")]
+        self.mitosis_labels = [os.path.join(path, "mitosis_inferenced", img) for img in os.listdir(os.path.join(path, "mitosis_inferenced")) if img.endswith(".tif")]
+        self.transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32),
+        ])
+    
+    def __len__(self):
+        return len(self.imgs)
+    
+    @staticmethod
+    def extract_full_patches(img: torch.Tensor, patch_size=256):
+        # img: (C, H, W)
+        C, H, W = img.shape
+        img_batched = img.unsqueeze(0)  # (1, C, H, W)
+
+        # Only patches that fully fit will be returned
+        patches = F.unfold(
+            img_batched, 
+            kernel_size=patch_size, 
+            stride=patch_size
+        )
+
+        # Each column is a flattened patch
+        patches = patches.transpose(1, 2)  # (1, num_patches, C*ps*ps)
+        patches = patches.reshape(-1, C, patch_size, patch_size)
+        return patches
+    
+    def __getitem__(self, idx):
+        img_path = self.imgs[idx]
+        mitosis_path = self.mitosis_labels[idx]
+        img = self.transform(Image.open(img_path).convert("RGB"))
+        mit = Image.open(mitosis_path)
+        mitosis_label = torch.tensor(np.array(mit)).unsqueeze(0).to(torch.float32) # (1, H, W)
+        if img.max().item() > 1:
+            img = img / 255.0
+        imgs = self.extract_full_patches(img)  # (num_patches, 3, 256, 256)
+        mitosis_labels = self.extract_full_patches(mitosis_label) # (num_patches, 1, 256, 256)
+        mitosis_percentages = [0 if (torch.isclose(ml, torch.tensor(2.0))).sum().item() == 0
+                                else (torch.isclose(ml, torch.tensor(2.0))).sum().item() / ((torch.isclose(ml, torch.tensor(1.0))).sum().item() 
+                                + (torch.isclose(ml, torch.tensor(2.0))).sum().item() + (torch.isclose(ml, torch.tensor(3.0))).sum().item()) 
+                                for ml in mitosis_labels] # (num_patches,)
+        return imgs, (mitosis_percentages, img_path)

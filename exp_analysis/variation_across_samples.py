@@ -22,13 +22,13 @@ def main():
         exp_L.append(np.load(each))
     expression_matrix = np.concatenate(exp_L)
     gene_names = np.load(args.gene_name)
-    # revert the log2 transform in the prediction
-    expression_matrix = np.clip(expression_matrix, 0, None)
-    expression_matrix = 2**expression_matrix - 1
-    # normalize to counts per million
-    expression_matrix = expression_matrix / np.sum(expression_matrix, axis=1, keepdims=True) * 1e6
-    # log2 transform
-    expression_matrix = np.log2(expression_matrix + 1)
+    # # revert the log2 transform in the prediction
+    # expression_matrix = np.clip(expression_matrix, 0, None)
+    # expression_matrix = 2**expression_matrix - 1
+    # # normalize to counts per million
+    # expression_matrix = expression_matrix / np.sum(expression_matrix, axis=1, keepdims=True) * 1e6
+    # # log2 transform
+    # expression_matrix = np.log2(expression_matrix + 1)
 
     # compute the variation across samples
     variation = np.std(expression_matrix, axis=0)

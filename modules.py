@@ -190,7 +190,7 @@ class HSICProjector(nn.Module):
         return x, y
 
 class GatedMLPBlock(nn.Module):
-    def __init__(self, input_size, hidden_size, p=0.2, return_gate = False):
+    def __init__(self, input_size, hidden_size, p=0.2):
         '''
         Block of Gated MLP for gene expression prediction.
         Args:
@@ -208,7 +208,6 @@ class GatedMLPBlock(nn.Module):
             nn.Sigmoid()
         )
         self.norm = nn.LayerNorm(input_size)
-        self.return_gate = return_gate
         self.dropout = nn.Dropout(p) # Dropout layer to prevent overfitting
 
     def forward(self, x):
@@ -225,17 +224,26 @@ class GatedMLPBlock(nn.Module):
             x (Tensor): Input tensor of shape (batch_size, input_size)
         Returns:
             Tensor: Output tensor of shape (batch_size, input_size) after applying the Gated MLP block.
-            If return_gate is True, also returns the gate tensor.
         '''
         gate = self.gate(x)
         x_proj = self.fc2(self.dropout(F.gelu(self.fc1(x))))
-        if self.return_gate:
-            return self.norm(x + gate * x_proj), gate
         return self.norm(x + gate * x_proj)
+    
+    def get_x_and_gate(self, x):
+        '''
+        Get the returned value as well as the gate values from the Gated MLP block
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, input_size)
+        Returns:
+            Tensor: Gate tensor of shape (batch_size, input_size)
+        '''
+        gate = self.gate(x)
+        x_proj = self.fc2(self.dropout(F.gelu(self.fc1(x))))
+        return self.norm(x + gate * x_proj), gate
 
 class PredictorGMLP(nn.Module):
     # Predicts the whole transcriptome from the image using a Gated MLP
-    def __init__(self, input_size, hidden_size, output_size, num_layers=3, dropout=0.2, return_gate=False):
+    def __init__(self, input_size, hidden_size, output_size, num_layers=3, dropout=0.2):
         '''
         Gated MLP based predictor for gene expression from image features.
         Args:
@@ -244,15 +252,13 @@ class PredictorGMLP(nn.Module):
             output_size (int): Size of the output gene expression vector.
             num_layers (int, optional): Number of Gated MLP blocks. Defaults to 3.
             dropout (float, optional): Dropout probability. Defaults to 0.2.
-            return_gate (bool, optional): Whether to return the gates. Defaults to False.
         '''
         super().__init__()
         self.layers = nn.ModuleList([
-            GatedMLPBlock(input_size, hidden_size, dropout, return_gate)
+            GatedMLPBlock(input_size, hidden_size, dropout)
             for _ in range(num_layers)
         ])
         self.output_proj = nn.Linear(input_size, output_size) #make gene expression prediction
-        self.return_gate = return_gate
 
     def forward(self, x): 
         '''
@@ -263,16 +269,23 @@ class PredictorGMLP(nn.Module):
             Tensor: Output tensor of shape (batch_size, output_size) representing predicted gene expression,
                     or the gated output of shape (num_layers, batch_size, input_size) if return_gate is True.
         '''
-        if self.return_gate:
-            gate_L = []
-            for layer in self.layers:
-                x, gate = layer(x)
-                gate_L.append(gate)
-            return torch.stack(gate_L) # Return list of gates from each layer, shape: (num_layers, batch_size, input_size)
-        else:
-            for layer in self.layers:
-                x = layer(x)
-            return self.output_proj(x)  # Final gene expression vector
+        for layer in self.layers:
+            x = layer(x)
+        return self.output_proj(x)  # Final gene expression vector
+    
+    def get_gates(self, x):
+        '''
+        Get the gate values from each Gated MLP block
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, input_size)
+        Returns:
+            Tensor: Gated output of shape (num_layers, batch_size, input_size)
+        '''
+        gate_L = []
+        for layer in self.layers:
+            x, gate = layer.get_x_and_gate(x)
+            gate_L.append(gate)
+        return torch.stack(gate_L) # Return list of gates from each layer, shape: (num_layers, batch_size, input_size)
 
 #! modules for SPAGHETTI
 class ResidualBlock(nn.Module):

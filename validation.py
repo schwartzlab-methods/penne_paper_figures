@@ -99,12 +99,13 @@ def main():
     parser.add_argument('--spaghetti_model', type=str, default=None, help='Path to the Spaghetti model. If none supplied, it will load from the state dict')
     parser.add_argument('--output_dir', type=str, help='Output directory')
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
+    parser.add_argument('--generate_predictions', action='store_true', help='Whether to generate predictions for H&E images')
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     # create dataset
     dataset_L = []
     for i in range(len(args.visiumhd_dir)):
-        dataset_L.append(VisiumHD_Livecell_Dataset(args.visiumhd_dir[i], args.mtx_dir[i], args.livecell_dir))
+        dataset_L.append(VisiumHD_Livecell_Dataset(args.visiumhd_dir[i], args.mtx_dir[i], args.livecell_dir, use_mtx=args.generate_predictions))
     dataset = ConcatDataset(dataset_L)
     # split dataset into train and val
     _, val_dataset = random_split(dataset, [0.8, 0.2])
@@ -122,6 +123,7 @@ def main():
     model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_dir, num_genes = dataset.datasets[0].num_genes, 
                                 converter = converter, feature_extractor = feature_extractor)
     model.freeze()
+    model.eval()
     # inference
     pred_L = []
     gt_L = []
@@ -141,19 +143,28 @@ def main():
                 he_image = he_image.to(model.device)
                 mtx = mtx.to(model.device)
                 pcm = pcm.to(model.device)
-                pred_exp = model.forward(he_image, if_convert=False)
+                if args.generate_predictions:
+                    # generate predictions
+                    pred_exp = model.forward(he_image, if_convert=False)
                 # compute some features
-                features_he = model.compute_feature(he_image, if_convert=False, if_translate=True)
-                features_he_non_translated = model.compute_feature(he_image, if_convert=False, if_translate=False)
-                features_pcm = model.compute_feature(pcm, if_convert=True, if_translate=True)
-                features_pcm_non_translate = model.compute_feature(pcm, if_convert=True, if_translate=False)
-                features_pcm_non_convert = model.compute_feature(pcm, if_convert=False, if_translate=False)
-                features_he_translated_gated = model.compute_gate(he_image, if_convert=False, if_translate=True)
-                features_pcm_translated_gated = model.compute_gate(pcm, if_convert=True, if_translate=True)
-                # remove all negative values
-                pred_exp[pred_exp < 0] = 0
-                pred_L.append(pred_exp.cpu().numpy())
-                gt_L.append(mtx.cpu().numpy())
+                # raw features (ie no convert no translator)
+                features_pcm_non_convert = model.compute_feature(pcm, if_convert=False, if_translate=False, if_ortho=False)
+                features_he_non_translated = model.compute_feature(he_image, if_convert=False, if_translate=False, if_ortho=False)
+                # PCM using converter (spaghtetti)
+                features_pcm_non_translate = model.compute_feature(pcm, if_convert=True, if_translate=False, if_ortho=False)
+                # including translator for both
+                features_he = model.compute_feature(he_image, if_convert=False, if_translate=True, if_ortho=True)
+                features_pcm = model.compute_feature(pcm, if_convert=True, if_translate=True, if_ortho=True)
+                # features_he_translated_gated = model.compute_gate(he_image, if_convert=False, if_translate=True)
+                # features_pcm_translated_gated = model.compute_gate(pcm, if_convert=True, if_translate=True)
+                # domain features
+                features_he_translated_gated = model.compute_domain_feature(he_image, if_convert=False, if_translate=True)
+                features_pcm_translated_gated = model.compute_domain_feature(pcm, if_convert=True, if_translate=True)
+                if args.generate_predictions:
+                    # remove all negative values
+                    pred_exp[pred_exp < 0] = 0
+                    pred_L.append(pred_exp.cpu().numpy())
+                    gt_L.append(mtx.cpu().numpy())
                 features_he_L.append(features_he.cpu().numpy())
                 features_he_non_translated_L.append(features_he_non_translated.cpu().numpy())
                 features_pcm_L.append(features_pcm.cpu().numpy())
@@ -162,8 +173,12 @@ def main():
                 features_he_translated_gated_L.append(features_he_translated_gated.cpu().numpy())
                 features_pcm_translated_gated_L.append(features_pcm_translated_gated.cpu().numpy())
                 img_path_L.append(image_path[0])
-    pred = np.concatenate(pred_L, axis=0)
-    true = np.concatenate(gt_L, axis=0)
+    if args.generate_predictions:
+        pred = np.concatenate(pred_L, axis=0)
+        true = np.concatenate(gt_L, axis=0)
+        np.save(os.path.join(args.output_dir, "pred.npy"), pred)
+        np.save(os.path.join(args.output_dir, "true.npy"), true)
+        print(f"Final prediction shape: {pred.shape}") # spots x features
     he_features_translated = np.concatenate(features_he_L, axis=0)
     he_features_non_translated = np.concatenate(features_he_non_translated_L, axis=0)
     he_features_translated_gated = np.concatenate(features_he_translated_gated_L, axis=0)
@@ -172,12 +187,9 @@ def main():
     pcm_features_non_converted  = np.concatenate(features_pcm_non_convert_L, axis=0)
     pcm_features_translated_gated = np.concatenate(features_pcm_translated_gated_L, axis=0)
     imgs = np.array(img_path_L)
-    print(f"Final prediction shape: {pred.shape}") # spots x features
-    print("Finished generating predictions")
+    print("Finished generating predictions and/or features")
 
     # save numpys
-    np.save(os.path.join(args.output_dir, "pred.npy"), pred)
-    np.save(os.path.join(args.output_dir, "true.npy"), true)
     np.save(os.path.join(args.output_dir, "he_features_translated.npy"), he_features_translated)
     np.save(os.path.join(args.output_dir, "he_features_translated_gated.npy"), he_features_translated_gated)
     np.save(os.path.join(args.output_dir, "he_features_non_translated.npy"), he_features_non_translated)
@@ -187,90 +199,91 @@ def main():
     np.save(os.path.join(args.output_dir, "pcm_features_non_converted.npy"), pcm_features_non_converted)
     np.save(os.path.join(args.output_dir, "image_names.npy"), imgs)
 
-    #! across spots correlation
-    corr = np.zeros(pred.shape[0])
-    for i in range(pred.shape[0]):
-        corr[i] = np.corrcoef(pred[i,:], true[i,:],)[0,1] #corrcoef returns a matrix
-    #remove nan
-    corr_spots = corr[~np.isnan(corr)]
-    # plot histogram
-    chart = alt.Chart(pd.DataFrame(corr_spots, columns=["correlation"])).mark_bar().encode(
-        alt.X("correlation", bin=alt.Bin(maxbins=20)),
-        y='count()',
-    ).properties(
-        title="Correlation of predicted vs ground truth expression across spots"
-    ).interactive()
-    chart.save(os.path.join(args.output_dir, f"correlation_spots_hist_{args.name}.html"))
-    spot_corr_df = pd.DataFrame({
-        "image_add": imgs,
-        "correlation": corr
-    })
-    spot_corr_df.to_csv(os.path.join(args.output_dir, f'spot_correlation_{args.name}.csv'))
+    if args.generate_predictions:
+        #! across spots correlation
+        corr = np.zeros(pred.shape[0])
+        for i in range(pred.shape[0]):
+            corr[i] = np.corrcoef(pred[i,:], true[i,:],)[0,1] #corrcoef returns a matrix
+        #remove nan
+        corr_spots = corr[~np.isnan(corr)]
+        # plot histogram
+        chart = alt.Chart(pd.DataFrame(corr_spots, columns=["correlation"])).mark_bar().encode(
+            alt.X("correlation", bin=alt.Bin(maxbins=20)),
+            y='count()',
+        ).properties(
+            title="Correlation of predicted vs ground truth expression across spots"
+        ).interactive()
+        chart.save(os.path.join(args.output_dir, f"correlation_spots_hist_{args.name}.html"))
+        spot_corr_df = pd.DataFrame({
+            "image_add": imgs,
+            "correlation": corr
+        })
+        spot_corr_df.to_csv(os.path.join(args.output_dir, f'spot_correlation_{args.name}.csv'))
 
-    #! across genes correlation
-    if args.gene_names.endswith("tsv.gz"):
-        gene_names = pd.read_csv(args.gene_names, sep="\t", header = None)[1].values
-    else:
-        with open(args.gene_names, 'r') as f:
-            gene_names = [line.strip() for line in f.readlines() if "Unnamed: 0" not in line]
-    corr = np.zeros(pred.shape[1])
-    for i in range(pred.shape[1]):
-        corr[i] = np.corrcoef(pred[:,i], true[:,i],)[0,1] #corrcoef returns a matrix
-    #remove nan
-    corr_genes = corr[~np.isnan(corr)]
-    # plot histogram
-    chart = alt.Chart(pd.DataFrame(corr_genes, columns=["correlation"])).mark_bar().encode(
-        alt.X("correlation", bin=alt.Bin(maxbins=20)),
-        y='count()',
-    ).properties(
-        title="Correlation of predicted vs ground truth expression across genes"
-    ).interactive()
-    chart.save(os.path.join(args.output_dir, f"correlation_hist_genes_{args.name}.html"))
-    gene_corr_df = pd.DataFrame({
-        "gene_name": gene_names,
-        "correlation": corr
-    })
-    gene_corr_df.to_csv(os.path.join(args.output_dir, f'gene_correlation_{args.name}.csv'))
+        #! across genes correlation
+        if args.gene_names.endswith("tsv.gz"):
+            gene_names = pd.read_csv(args.gene_names, sep="\t", header = None)[1].values
+        else:
+            with open(args.gene_names, 'r') as f:
+                gene_names = [line.strip() for line in f.readlines() if "Unnamed: 0" not in line]
+        corr = np.zeros(pred.shape[1])
+        for i in range(pred.shape[1]):
+            corr[i] = np.corrcoef(pred[:,i], true[:,i],)[0,1] #corrcoef returns a matrix
+        #remove nan
+        corr_genes = corr[~np.isnan(corr)]
+        # plot histogram
+        chart = alt.Chart(pd.DataFrame(corr_genes, columns=["correlation"])).mark_bar().encode(
+            alt.X("correlation", bin=alt.Bin(maxbins=20)),
+            y='count()',
+        ).properties(
+            title="Correlation of predicted vs ground truth expression across genes"
+        ).interactive()
+        chart.save(os.path.join(args.output_dir, f"correlation_hist_genes_{args.name}.html"))
+        gene_corr_df = pd.DataFrame({
+            "gene_name": gene_names,
+            "correlation": corr
+        })
+        gene_corr_df.to_csv(os.path.join(args.output_dir, f'gene_correlation_{args.name}.csv'))
 
-    ## gene analysis
-    adata_raw = sc.AnnData(true)
-    adata_raw.var_names = gene_names
-    print(f"Shape of raw adata: {adata_raw.shape}")
+        ## gene analysis
+        adata_raw = sc.AnnData(true)
+        adata_raw.var_names = gene_names
+        print(f"Shape of raw adata: {adata_raw.shape}")
 
-    adata_pred = sc.AnnData(pred)
-    adata_pred.var_names = gene_names
-    print(f"Shape of predicted adata: {adata_pred.shape}")
+        adata_pred = sc.AnnData(pred)
+        adata_pred.var_names = gene_names
+        print(f"Shape of predicted adata: {adata_pred.shape}")
 
-    # compute gene lists
-    # normalize counts matrix so that each 'cell' (barcode) has counts summing to 1
-    adata_pred.X_norm = sc.pp.normalize_total(adata_pred, target_sum=1, inplace=False)['X']
-    adata_raw.X_norm = sc.pp.normalize_total(adata_raw, target_sum=1, inplace=False)['X']
+        # compute gene lists
+        # normalize counts matrix so that each 'cell' (barcode) has counts summing to 1
+        adata_pred.X_norm = sc.pp.normalize_total(adata_pred, target_sum=1, inplace=False)['X']
+        adata_raw.X_norm = sc.pp.normalize_total(adata_raw, target_sum=1, inplace=False)['X']
 
-    # create new adata.var column contaning mean of each column of adata.X_norm above
-    # this is total normalized counts per gene a.k.a. 'mean_total_expression'
-    adata_pred.var['mean_expression'] = np.ravel(adata_pred.X_norm.mean(0))
-    adata_raw.var['mean_expression'] = np.ravel(adata_raw.X_norm.mean(0))
+        # create new adata.var column contaning mean of each column of adata.X_norm above
+        # this is total normalized counts per gene a.k.a. 'mean_total_expression'
+        adata_pred.var['mean_expression'] = np.ravel(adata_pred.X_norm.mean(0))
+        adata_raw.var['mean_expression'] = np.ravel(adata_raw.X_norm.mean(0))
 
-    # compute highly expressed genes
-    # return pd.DataFrame of n top-ranked genes by mean expression
-    n = 500
-    most_expressed_pred = pd.DataFrame(adata_pred.var.nlargest(n, 'mean_expression')['mean_expression'])
-    most_expressed_raw = pd.DataFrame(adata_raw.var.nlargest(n, 'mean_expression')['mean_expression'])
-    total_most_exp = pd.concat([most_expressed_pred, most_expressed_raw], axis=1, join='outer')
-    total_most_exp.to_csv(os.path.join(args.output_dir, f'most_expressed_genes_{args.name}.csv'), header=['predicted', 'raw'])
+        # compute highly expressed genes
+        # return pd.DataFrame of n top-ranked genes by mean expression
+        n = 500
+        most_expressed_pred = pd.DataFrame(adata_pred.var.nlargest(n, 'mean_expression')['mean_expression'])
+        most_expressed_raw = pd.DataFrame(adata_raw.var.nlargest(n, 'mean_expression')['mean_expression'])
+        total_most_exp = pd.concat([most_expressed_pred, most_expressed_raw], axis=1, join='outer')
+        total_most_exp.to_csv(os.path.join(args.output_dir, f'most_expressed_genes_{args.name}.csv'), header=['predicted', 'raw'])
 
-    sc.pp.normalize_total(adata_raw)
-    sc.pp.normalize_total(adata_pred)
-    sc.pp.log1p(adata_raw)
-    sc.pp.log1p(adata_pred)
+        sc.pp.normalize_total(adata_raw)
+        sc.pp.normalize_total(adata_pred)
+        sc.pp.log1p(adata_raw)
+        sc.pp.log1p(adata_pred)
 
-    sc.pp.highly_variable_genes(adata_pred, n_top_genes=n)
-    sc.pp.highly_variable_genes(adata_raw, n_top_genes=n)
+        sc.pp.highly_variable_genes(adata_pred, n_top_genes=n)
+        sc.pp.highly_variable_genes(adata_raw, n_top_genes=n)
 
-    highly_variable_pred = adata_pred[:,adata_pred.var['highly_variable']==True].to_df()
-    highly_variable_raw = adata_raw[:,adata_raw.var['highly_variable']==True].to_df()
-    total_highly_variable = pd.concat([highly_variable_pred, highly_variable_raw], axis=1, join='outer')
-    total_highly_variable.to_csv(os.path.join(args.output_dir, f'highly_variable_genes_{args.name}.csv'))
+        highly_variable_pred = adata_pred[:,adata_pred.var['highly_variable']==True].to_df()
+        highly_variable_raw = adata_raw[:,adata_raw.var['highly_variable']==True].to_df()
+        total_highly_variable = pd.concat([highly_variable_pred, highly_variable_raw], axis=1, join='outer')
+        total_highly_variable.to_csv(os.path.join(args.output_dir, f'highly_variable_genes_{args.name}.csv'))
 
     # plot correlation heatmap of top 50 highly variable genes for each
     # get expression matrix for top 50 highly variable genes

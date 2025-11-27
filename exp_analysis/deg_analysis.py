@@ -12,6 +12,13 @@ import argparse
 from tqdm import tqdm
 from cmapPy.pandasGEXpress.parse_gct import parse
 
+import altair as alt
+## plotting settings
+if True:  # In order to bypass isort when saving
+    from altairThemes import altairThemes
+alt.themes.register("publishTheme", altairThemes.publishTheme)
+alt.themes.enable("publishTheme")
+
 def main():
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Differential Gene Expression Analysis")
@@ -21,7 +28,7 @@ def main():
     parser.add_argument('--cell_types', type=str, required=True, nargs="+", 
                         help='The two cell types to compare. Use to select from the dataset.')
     parser.add_argument('--comparison', type=str, nargs="+", default=None,
-                        help='The comparison type (e.g. "control" or "treatment"). This is used to query the gmt. If none, will use cell_types')
+                        help='The comparison type (e.g. "control" or "treatment"). If none, will use cell_types')
     parser.add_argument('--output', type=str, required=True, help='Output directory for results')
     parser.add_argument('--gt', type=str, default=None, help='Path to the ground truth RNA seq .gct file (optional)')
     parser.add_argument('--gene_template', type=str, default=None, help='Path to the tsv file for mapping gene symbols tp gene names (optinal)')
@@ -121,7 +128,7 @@ def main():
         if args.comparison:
             gene_df['cell_type'] = [dict_cell_type_to_comp_group[cell_type] for cell_type in cell_types]
         else:
-            gene_df['cell_type'] = comparison
+            gene_df['cell_type'] = cell_types
 
         # Create the design matrix
         X = sm.add_constant(pd.get_dummies(gene_df['cell_type'], drop_first=True)).astype(float)
@@ -160,7 +167,8 @@ def main():
         })
     # Adjust p-values for multiple testing
     results_df['adj_p_value'] = sm.stats.multipletests(results_df['p_value'], method='fdr_bh')[1]
-    results_df['Adj p < 0.05 and |Log2FC| > 1'] = results_df.apply(lambda x: (x["adj_p_value"] < 0.05) and (np.absolute(x["log_fc"]) > 1), axis=1).astype(str)
+    results_df["neg_log10_adj_p_value"] = -np.log10(results_df['adj_p_value'])
+    results_df['adj_p_005_log2fc_1'] = results_df.apply(lambda x: (x["adj_p_value"] < 0.05) and (np.absolute(x["log_fc"]) > 1), axis=1).astype(str)
     if args.gt is not None:
         results_df['correct_dir'] = results_df.apply(lambda x: "Same_significant" if (np.sign(x['log_fc']) == np.sign(x['log_fc_gt'])) and x["adj_p_value"] < 0.05
                                                      else "Different_significant" if (np.sign(x['log_fc']) != np.sign(x['log_fc_gt'])) and x["adj_p_value"] < 0.05 
@@ -171,8 +179,8 @@ def main():
     results_df.to_csv(os.path.join(args.output, f'deg_ref_{comparison[0]}vs{comparison[1]}.csv'), index=False)
     # Plot results
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=results_df, x='log_fc', y=-np.log10(results_df['adj_p_value']), 
-                    hue='Adj p < 0.05 and |Log2FC| > 1', hue_order=["True", "False"])
+    sns.scatterplot(data=results_df, x='log_fc', y='neg_log10_adj_p_value', 
+                    hue='adj_p_005_log2fc_1', hue_order=["True", "False"])
     plt.axhline(y=-np.log10(0.05), color='r', linestyle='--')
     plt.axvline(x=1, color='r', linestyle='--')
     plt.axvline(x=-1, color='r', linestyle='--')
@@ -181,6 +189,24 @@ def main():
     plt.ylabel('-log10(FDR Adjusted p-value)')
     plt.savefig(os.path.join(args.output, f'deg_plot_ref_{comparison[0]}vs{comparison[1]}.png'))
     plt.close()
+
+    # plot with Altair
+    deg_chart = alt.Chart(results_df).mark_circle().encode(
+        x=alt.X('log_fc:Q', title='Log2 FC'),
+        y=alt.Y('neg_log10_adj_p_value:Q', title='-log10(FDR Adjusted p-value)'),
+        color=alt.Color('adj_p_005_log2fc_1', scale=alt.Scale(domain=["True", "False"], range=['red', 'blue']), 
+                        legend=alt.Legend(title='FDR<0.05 & |Log2FC|>1')),
+        tooltip=['gene', 'log_fc', 'adj_p_value']
+    ).properties(
+        title=f'Differential Gene Expression Analysis: {comparison[0]}(Reference) vs {comparison[1]}'
+    ).add_selection(
+        alt.selection_single(fields=['gene'], on='click')
+    ).interactive()
+    # add two lines for p-value and log2fc thresholds
+    deg_chart += alt.Chart(pd.DataFrame({'y': [-np.log10(0.05)]})).mark_rule(color='black', strokeDash=[5,5]).encode(y='y:Q')
+    deg_chart += alt.Chart(pd.DataFrame({'x': [1]})).mark_rule(color='black', strokeDash=[5,5]).encode(x='x:Q')
+    deg_chart += alt.Chart(pd.DataFrame({'x': [-1]})).mark_rule(color='black', strokeDash=[5,5]).encode(x='x:Q')
+    deg_chart.save(os.path.join(args.output, f'deg_plot_ref_{comparison[0]}vs{comparison[1]}.html'))
     # get a list of differentially expressed genes
     deg_genes_up = results_df[results_df['adj_p_value'] < 0.05]
     deg_genes_up = deg_genes_up[deg_genes_up['log_fc'] > 1]['gene'].tolist()

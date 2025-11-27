@@ -8,6 +8,12 @@ import argparse
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
+import altair as alt
+## plotting settings
+if True:  # In order to bypass isort when saving
+    from altairThemes import altairThemes
+alt.themes.register("publishTheme", altairThemes.publishTheme)
+alt.themes.enable("publishTheme")
 
 def pre_rank(args):
     df = pd.read_csv(args.csv)
@@ -42,9 +48,13 @@ def pre_rank(args):
     )
 
     # Sort by NES and select top 10 UP enriched
-    top_terms_sorted = pre_res.res2d.sort_values("NES", ascending=False)
-    top_terms_sorted = top_terms_sorted[top_terms_sorted["FDR q-val"] < 0.05]
-    top_terms_sorted = top_terms_sorted[top_terms_sorted["NES"] > 0].head(10)
+    terms_sorted = pre_res.results.sort_values("NES", ascending=False)
+    terms_sorted = terms_sorted[terms_sorted["NOM p-val"] < 0.05]
+    # get only the entries after __
+    terms_sorted["Term"] = terms_sorted["Term"].str.split("__").str[-1]
+
+    # top10 positive
+    top_terms_sorted = terms_sorted[terms_sorted["NES"] > 0]
 
     plt.figure(figsize=(10, 6))
     sns.barplot(
@@ -63,9 +73,7 @@ def pre_rank(args):
     plt.close()
 
     # Sort by NES and select top 10 DOWN enriched
-    btm_terms_sorted = pre_res.res2d.sort_values("NES", ascending=False)
-    btm_terms_sorted = btm_terms_sorted[btm_terms_sorted["FDR q-val"] < 0.05]
-    btm_terms_sorted = btm_terms_sorted[btm_terms_sorted["NES"] < 0].head(10)
+    btm_terms_sorted = terms_sorted[terms_sorted["NES"] < 0]
 
     plt.figure(figsize=(10, 6))
     sns.barplot(
@@ -84,9 +92,30 @@ def pre_rank(args):
     plt.savefig(os.path.join(args.output, 'gsea_results_btm.png'))
     plt.close()
 
+    # plot one altair showing the top positive and negative 10 enrichment from pre-rank
+    # make red more red for positive and blue more blue for negative based on the p-val
+    altair_df = pd.DataFrame({
+        "Term": pd.concat([top_terms_sorted["Term"], btm_terms_sorted["Term"]]),
+        "NES": pd.concat([top_terms_sorted["NES"], btm_terms_sorted["NES"]]),
+        "NOM p-val": pd.concat([top_terms_sorted["NOM p-val"], btm_terms_sorted["NOM p-val"]])
+    })
+    # plot with a scale
+    chart = alt.Chart(altair_df).mark_bar().encode(
+        x=alt.X('NES:Q', title='Normalized Enrichment Score (NES)'),
+        y=alt.Y('Term:N', sort='-x', title='Gene Set'),
+        color=alt.condition(
+            alt.datum.NES > 0,
+            alt.value('indianred'),  # Positive NES color
+            alt.value('steelblue')   # Negative NES color
+        )
+    ).properties(
+        title="Top Positively and Negatively Enriched Gene Sets",
+    ).interactive()
+    chart.save(os.path.join(args.output, 'gsea_results_top_btm_altair.html'))
+
     if args.comparisons:
-        histogram_df = pd.DataFrame({"positive_NES": pre_res.res2d[pre_res.res2d["NES"] > 0]["Term"],
-                                     "negative_NES": pre_res.res2d[pre_res.res2d["NES"] < 0]["Term"]})
+        histogram_df = pd.DataFrame({"positive_NES": pre_res.results[pre_res.results["NES"] > 0]["Term"],
+                                     "negative_NES": pre_res.results[pre_res.results["NES"] < 0]["Term"]})
         # compute the positive enrichment and negative enrichment for each comparison
         final_results_dict = {}
         for comp in args.comparisons:
@@ -114,6 +143,23 @@ def pre_rank(args):
         plt.tight_layout()
         plt.savefig(os.path.join(args.output, f'enrichr_results_all_comparisons_sbs.png'))
         plt.close()
+        # plot with altair
+        altair_df = pd.DataFrame({
+            "Comparison": comps * 2,
+            "Enrichment": pos_values + neg_values,
+            "Type": ["Positive"] * len(comps) + ["Negative"] * len(comps)
+        })
+        chart = alt.Chart(altair_df).mark_bar().encode(
+            x=alt.X('Comparison:N', title='Comparisons', sort='-y'),
+            y=alt.Y('Enrichment:Q', title='Relative Frequency'),
+            color=alt.Color('Type:N', title='Enrichment Type', scale=alt.Scale(
+                domain=['Positive', 'Negative'],
+                range=['indianred', 'steelblue']
+            ))
+        ).properties(
+            title="Positive vs Negative Enrichment Across Comparisons",
+        ).interactive()
+        chart.save(os.path.join(args.output, f'enrichr_results_all_comparisons_sbs_altair.html'))
 
 def enrichr(args):
     # Load the csv file
@@ -139,9 +185,9 @@ def enrichr(args):
     )
 
     # Sort by combined score and select top 10 UP enriched
-    top_terms_sorted = enr_res.res2d.sort_values("Combined Score", ascending=False)
+    top_terms_sorted = enr_res.results.sort_values("Combined Score", ascending=False)
     top_terms_sorted = top_terms_sorted[top_terms_sorted["Adjusted P-value"] < 0.05]
-    top_terms_sorted = top_terms_sorted[top_terms_sorted["Combined Score"] > 0].head(10)
+    top_terms_sorted = top_terms_sorted[top_terms_sorted["Combined Score"] > 0]
     plt.figure(figsize=(10, 6))
     sns.barplot(
         x="Combined Score",
@@ -156,6 +202,20 @@ def enrichr(args):
     plt.tight_layout()
     plt.savefig(os.path.join(args.output, 'enrichr_results_top.png'))
     plt.close()
+
+    # plot with Altair
+    altair_df = pd.DataFrame({
+        "Term": top_terms_sorted["Term"],
+        "Combined Score": top_terms_sorted["Combined Score"],
+    })
+    chart = alt.Chart(altair_df).mark_bar().encode(
+        x=alt.X('Combined Score:Q', title='Combined Score'),
+        y=alt.Y('Term:N', sort='-x', title='Gene Set'),
+        color=alt.value('indianred')  # Color for bars
+    ).properties(
+        title="Top Positively Enriched Gene Sets (Enrichr)",
+    ).interactive()
+    chart.save(os.path.join(args.output, 'enrichr_results_top_altair.html'))
 
 def main():
     parser = argparse.ArgumentParser(description="GSEA analysis")

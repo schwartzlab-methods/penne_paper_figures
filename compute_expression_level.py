@@ -26,16 +26,22 @@ def main():
     # Compute the expression level for each label
     expression_levels = {}
     for label in args.labels_to_compare:
-        expression_levels[label] = expre_df.loc[label].mean(axis=0)
+        # calculate how many entries with non-zeoro expression
+        expression_levels[label] = expre_df.loc[label][expre_df.loc[label] > 0].count(axis=1).values
+    
+    df_to_plot = pd.DataFrame({'label': np.concatenate([np.repeat(label, len(expression_levels[label])) for label in args.labels_to_compare]),
+                               'expression_level': np.concatenate([expression_levels[label] for label in args.labels_to_compare])})
 
     # plot a voilin plot for each comparison
     plt.figure(figsize=(10, 6))
-    sns.violinplot(data=[expre_df.loc[label].mean(axis=1) for label in args.labels_to_compare],
-                   x=args.labels_to_compare)
+    sns.violinplot(orient='v',
+                   data=df_to_plot,
+                   x='label',
+                   y='expression_level')
 
-    plt.title("Gene Expression Levels")
+    plt.title("Number of features expressed per patch")
     plt.xlabel("Labels")
-    plt.ylabel("Expression Level")
+    plt.ylabel("Number of Features")
     plt.savefig(os.path.join(args.output_path, "expression_levels_violin_plot.png"))
     plt.close()
 

@@ -37,7 +37,7 @@ def main():
     parser.add_argument("--gene_names", type=str, required=True,
                         help="Path to the gene names file")
     parser.add_argument("--genes_to_use", type=str, nargs="+", default=None,
-                        help="Path to the file with genes to use, or the name of the gene. If no supplied, use all genes")
+                        help="Path to the file with genes to use, or the name of the gene. If no supplied, use all genes")                   
     parser.add_argument("--output_dir", type=str, required=True, help="Path to the output directory")
     args = parser.parse_args()
 
@@ -64,7 +64,7 @@ def main():
         with open(args.gene_names, 'r') as f:
             gene_names = [line.strip() for line in f.readlines() if "Unnamed: 0" not in line]
         gene_names = np.array(gene_names).reshape(-1)
-    np.save(os.path.join(args.output_dir, f"gene_names.npy"), gene_names)
+        np.save(os.path.join(args.output_dir, f"gene_names.npy"), gene_names)
     print("Gene symbols saved to ", args.output_dir)
     num_genes = gene_names.shape[0]
 
@@ -93,7 +93,7 @@ def main():
 
     # prep model
     model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_path, num_genes = num_genes, 
-                                converter = converter, feature_extractor = feature_extractor, orthogonal_loss_weight=0.1)
+                                converter = converter, feature_extractor = feature_extractor)
     model.freeze()
     model.eval()
 

@@ -48,6 +48,9 @@ def compute_correlation(mean_exp, mit_levels):
     # return linear regression
     model = LinearRegression().fit(mean_exp.reshape(-1, 1), mit_levels.reshape(-1, 1))
     r2 = model.score(mean_exp.reshape(-1, 1), mit_levels.reshape(-1, 1))
+    print(f"Pearson correlation: r={pearson_corr}, p={pearson_p}")
+    print(f"Spearman correlation: r={spearman_corr}, p={spearman_p}")
+    print(f"R2 score: {r2}")
     return pearson_corr, pearson_p, spearman_corr, spearman_p, r2
 
 def main():
@@ -66,6 +69,9 @@ def main():
     parser.add_argument("--genes_to_use", type=str, default=None,
                         help="Path to the file with genes to use. If no supplied, use all genes")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to the output directory")
+    parser.add_argument("--plot_line", action="store_true",
+                        help="If used, a line plot showing the variation of gene expression of each frame will be generated.")
+    parser.add_argument("--test_mode", action="store_true", help="Whether to run in test mode to visually examine green value")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -91,9 +97,14 @@ def main():
     print("Gene symbols saved to ", args.output_dir)
     num_genes = gene_names.shape[0]
     try: # load existing inference results if available
-        pred_L = np.load(os.path.join(args.output_dir, "mitosis_pred.npy"))
         mitosis_L = np.load(os.path.join(args.output_dir, "mitosis_val.npy"))
-        img_name_L = np.load(os.path.join(args.output_dir, "mitosis_img_names.npy"))
+        if args.test_mode:
+            img_L = np.load(os.path.join(args.output_dir, "mitosis_test_imgs.npy"))
+            gfp_L = np.load(os.path.join(args.output_dir, "mitosis_test_gfp.npy"))
+            print("Loaded existing test mode mitosis images and GFP images.")
+        else:
+            pred_L = np.load(os.path.join(args.output_dir, "mitosis_pred.npy"))
+            img_name_L = np.load(os.path.join(args.output_dir, "mitosis_img_names.npy"))
     except FileNotFoundError:
         # prep model
         model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_path, num_genes = num_genes, 
@@ -103,24 +114,61 @@ def main():
         model.eval()
 
         # inference
-        pred_L = []
-        mitosis_L = []
+        pred_L_unconcat = []
+        mitosis_L_unconcat = []
         img_name_L = []
+        if args.test_mode: # store phase images and gfp images
+            img_L = []
+            gfp_L = [] 
         with torch.no_grad():
             for img, label in tqdm(loader):
                 img = img.to(model.device)
                 img = img.squeeze(0) #remove the default batch dimension
                 pred = model(img, if_convert=not args.no_spaghetti) #shape: num_patches, num_genes
-                pred_L.append(pred.cpu().numpy())
-                mitosis_L.append(np.array(label[0]))
+                pred_L_unconcat.append(pred.cpu().numpy())
                 img_name_L.append(np.array(label[1], dtype=str))
-        pred_L = np.concatenate(pred_L, axis=0) # shape: num_samples, num_genes
-        mitosis_L = np.concatenate(mitosis_L, axis=0).reshape(-1) # shape: num_samples
-        img_name_L = np.concatenate(img_name_L, axis=0).reshape(-1) # shape: num_samples
-        # save
-        np.save(os.path.join(args.output_dir, "mitosis_pred.npy"), pred_L)
+                mitosis_L_unconcat.append(np.array(label[0][0]))
+                if args.test_mode:
+                    img_L.append(img.cpu().numpy())
+                    gfp_L.append(label[2].numpy().squeeze(0))  # shape: num_patches, 3, H, W
+        mitosis_L = np.concatenate(mitosis_L_unconcat, axis=0).reshape(-1) # shape: num_samples
         np.save(os.path.join(args.output_dir, "mitosis_val.npy"), mitosis_L)
-        np.save(os.path.join(args.output_dir, "mitosis_img_names.npy"), img_name_L)
+        if not args.test_mode:
+            pred_L = np.concatenate(pred_L_unconcat, axis=0) # shape: num_samples, num_genes
+            img_name_L = np.concatenate(img_name_L, axis=0).reshape(-1) # shape: num_samples
+            # save
+            np.save(os.path.join(args.output_dir, "mitosis_pred.npy"), pred_L)
+            np.save(os.path.join(args.output_dir, "mitosis_img_names.npy"), img_name_L)
+        if args.test_mode:
+            # sample high and low mitosis images and save
+            img_L = np.concatenate(img_L, axis=0)  # shape: num_samples, num_patches, 1, H, W
+            gfp_L = np.concatenate(gfp_L, axis=0)  # shape: num_samples, num_patches, 1, H, W
+    if args.test_mode:
+        print("Generating test mode mitosis images...")
+        os.makedirs(os.path.join(args.output_dir, "test"), exist_ok=True)
+        high_mitosis_indices = np.argsort(mitosis_L)[-10:]
+        low_mitosis_indices = np.argsort(mitosis_L)[:10]
+        sampled_indices = list(chain(high_mitosis_indices, low_mitosis_indices))
+        sampled_imgs = [img_L[i] for i in sampled_indices]
+        sampled_mitosis = [mitosis_L[i] for i in sampled_indices]
+        sampled_gfp = [gfp_L[i] for i in sampled_indices]
+        for i, idx in tqdm(enumerate(sampled_indices)):
+            img = sampled_imgs[i] # shape: 3, H, W
+            gfp = sampled_gfp[i] # shape: 3, H, W
+            # change to H W 3 for plotting
+            img = np.transpose(img, (1, 2, 0))
+            gfp = np.transpose(gfp, (1, 2, 0))
+            mitosis_level = sampled_mitosis[i]
+            fig, axs = plt.subplots(1, 2, figsize=(8, 4))
+            axs[0].imshow(img, cmap='gray')
+            axs[0].set_title(f"PCM Image\nMitosis Level: {mitosis_level:.2f}")
+            axs[0].axis('off')
+            # show the entire gfp image with colour
+            axs[1].imshow(gfp, cmap='viridis')
+            axs[1].set_title("GFP Image")
+            axs[1].axis('off')
+            plt.savefig(os.path.join(args.output_dir, f"mitosis_test_img_{i}_idx_{idx}.png"))
+            plt.close()
 
     # load marker gene file
     with open(args.gmt_file, 'r') as f:
@@ -133,6 +181,7 @@ def main():
         mask = np.isin(gene_names, genes_to_use)
         pred_L = pred_L[:, mask]
         gene_names = gene_names[mask]
+        pred_L_unconcat = [each[:, mask] for each in pred_L_unconcat]
     
     # get subsect of genes that are in the gene set
     gene_set_indices = [i for i, g in enumerate(gene_names) if g in gene_set]
@@ -176,6 +225,97 @@ def main():
     chart = chart + regression
     chart.save(os.path.join(args.output_dir, "mean_exp_vs_mitosis_altair.html"))
     plt.close()
+
+    # plot a line plot of two lines showing the variation of gene expression and mitosis levels of each frame
+    if args.plot_line:
+        num_patches_per_file = len(mitosis_L) // len(img_name_L)
+        mean_exp_unconcat = [np.mean(each, axis=1) for each in pred_L_unconcat] # len: num_batches * num_time, each shape: num_patches, 1
+        mean_exp_per_frame = {}
+        mitosis_per_frame = {}
+        for batch_num in np.unique([name.split('_')[2] for name in img_name_L]):
+            # get all the indices for this batch of all time points
+            batch_indices = [i for i, name in enumerate(img_name_L) if int(batch_num) == int(name.split('_')[2])]
+            mitosis_batch = [mitosis_L_unconcat[i].reshape(-1) for i in batch_indices] # each shape: num_patches
+            pred_batch = [mean_exp_unconcat[i] for i in batch_indices] # each shape: num_patches, 1
+            img_batch = [img_name_L[i] for i in batch_indices]
+            print("Pred", len(pred_batch), "Mitosis", len(mitosis_batch), "Img", len(img_batch))
+            print("For each:", pred_batch[0].shape, mitosis_batch[0].shape)
+            # get all the time point names for this batch
+            time_points = sorted(list(set([img_name_L[i].split('_')[3] for i in batch_indices])))
+            # compute the mean expression and mitosis level for each time point for each patch in this batch
+            for patches in range(num_patches_per_file):
+                frame_mean_exp = []
+                frame_mitosis = []
+                for t in time_points:
+                    # get the index of this time point in the batch_indices
+                    time_point_index = [i for i in range(len(img_batch)) if img_batch[i].split('_')[3] == t][0]
+                    frame_mean_exp.append(pred_batch[time_point_index][patches])
+                    frame_mitosis.append(mitosis_batch[time_point_index][patches])
+                mean_exp_per_frame[f"batch_{batch_num}_patch_{patches}"] = frame_mean_exp
+                mitosis_per_frame[f"batch_{batch_num}_patch_{patches}"] = frame_mitosis
+        # plot line plot for each patch in each batch
+        for key in mean_exp_per_frame.keys():
+            time_points = list(range(len(mean_exp_per_frame[key])))
+            plt.figure(figsize=(10, 6))
+            plt.plot(time_points, mean_exp_per_frame[key], label="Mean Gene Expression")
+            plt.plot(time_points, mitosis_per_frame[key], label="Mitosis Levels")
+            plt.xlabel("Number of 30 Minute Time Points")
+            plt.ylabel("Value")
+            plt.title(f"Variation of Gene Expression and Mitosis Levels over Time\n{key}")
+            plt.legend()
+            plt.savefig(os.path.join(args.output_dir, f"line_plot_{key}.png"))
+            plt.close()
+            # plot with altair
+            df_line = pd.DataFrame({
+                "Time_Point": time_points,
+                "Mean_Gene_Expression": mean_exp_per_frame[key],
+                "Mitosis_Levels": mitosis_per_frame[key],
+            })
+            df_line_melted = df_line.melt(id_vars=["Time_Point"], value_vars=["Mean_Gene_Expression", "Mitosis_Levels"],
+                                          var_name="Metric", value_name="Value")
+            chart_line = alt.Chart(df_line_melted).mark_line(point=True).encode(
+                x=alt.X('Time_Point:N', title='Number of 30 Minute Time Points'),
+                y=alt.Y('Value:Q', title='Value'),
+                color='Metric:N'
+            ).interactive()
+            chart_line.save(os.path.join(args.output_dir, f"line_plot_{key}_altair.html"))
+        # plot for all patches in one batch together by taking mean across patches
+        # first get the unique batch numbers
+        # get unique batch numbers
+        unique_batches = set([key.split('_')[1] for key in mean_exp_per_frame.keys()])
+        for batch_num in unique_batches:
+            time_points = list(range(len(time_points)))
+            batch_mean_exp = []
+            batch_mitosis = []
+            for key in mean_exp_per_frame.keys():
+                if key.startswith(f"batch_{batch_num}_"):
+                    batch_mean_exp.append(mean_exp_per_frame[key])
+                    batch_mitosis.append(mitosis_per_frame[key])
+            batch_mean_exp = np.mean(np.array(batch_mean_exp), axis=0)
+            batch_mitosis = np.mean(np.array(batch_mitosis), axis=0)
+            plt.figure(figsize=(10, 6))
+            plt.plot(time_points, batch_mean_exp, label="Mean Gene Expression")
+            plt.plot(time_points, batch_mitosis, label="Mitosis Levels")
+            plt.xlabel("Number of 30 Minute Time Points")
+            plt.ylabel("Value")
+            plt.title(f"Variation of Gene Expression and Mitosis Levels over Time\nBatch {batch_num} (Mean across patches)")
+            plt.legend()
+            plt.savefig(os.path.join(args.output_dir, f"line_plot_batch_{batch_num}_mean_patches.png"))
+            plt.close()
+            # altair
+            df_line = pd.DataFrame({
+                "Time_Point": time_points,
+                "Mean_Gene_Expression": batch_mean_exp,
+                "Mitosis_Levels": batch_mitosis,
+            })
+            df_line_melted = df_line.melt(id_vars=["Time_Point"], value_vars=["Mean_Gene_Expression", "Mitosis_Levels"],
+                                          var_name="Metric", value_name="Value")
+            chart_line = alt.Chart(df_line_melted).mark_line(point=True).encode(
+                x=alt.X('Time_Point:N', title='Number of 30 Minute Time Points'),
+                y=alt.Y('Value:Q', title='Value'),
+                color='Metric:N'
+            ).interactive()
+            chart_line.save(os.path.join(args.output_dir, f"line_plot_batch_{batch_num}_mean_patches_altair.html"))
 
     # compute PCA according to gene expression profiles
     print("Running PCA")

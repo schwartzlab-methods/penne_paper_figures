@@ -224,7 +224,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         hsic = (Kc * Lc).sum() / ((B - 1) ** 2)
         return hsic
 
-    def forward(self, x: torch.Tensor, if_convert: bool=False, if_normalize=True) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, if_convert: bool=False, if_normalize=True, input_feature=False) -> torch.Tensor:
         '''Forward pass for the model.
 
         Args:
@@ -232,16 +232,21 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Input tensor of the image in the shape of (batch_size, num_channels, height, width).
             if_convert (bool, optional): 
                 Whether to use the converter to convert into H&E like images. Defaults to False.
+            if_normalize (bool, optional):
+                Whether to normalize the output gene expression using log2(CPM + 1). Defaults to True.
+            input_feature (bool, optional):
+                Whether the input is already a feature representation. Defaults to False.
 
         Returns:
             torch.Tensor: 
                 Output tensor of the gene expression inference in the shape of (batch_size, num_genes).
         '''
         # if_convert is used to determine whether to use the converter or not
-        if if_convert:
-            x = self.converter(x)
-        x_converted = self.image_processor(x)      
-        x = self.feature_extractor(x_converted).last_hidden_state[:, 0, :].view(x.shape[0], -1)
+        if not input_feature:
+            if if_convert:
+                x = self.converter(x)
+            x_converted = self.image_processor(x)      
+            x = self.feature_extractor(x_converted).last_hidden_state[:, 0, :].view(x.shape[0], -1)
         # x = self.translator(x)
         if self.make_ortho:
             # if if_convert:
@@ -291,7 +296,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             return x
 
     def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
-                     if_translate: bool=True, if_ortho: bool=True) -> torch.Tensor: #todo: clean this up a bit, figure out how to visualize gates
+                     if_translate: bool=True, if_ortho: bool=True, input_feature: bool=False) -> torch.Tensor:
         '''Compute gating vector for the input tensor.
 
         Args:
@@ -303,28 +308,29 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to use the translator for better domain alignment. Defaults to True.
             if_ortho (bool, optional): 
                 Whether to use the orthogonal translator. Defaults to True.
+            
 
         Returns:
             torch.Tensor: 
                 Gating vector of the input tensor in the shape of (num_layers, batch_size, num_features).
         '''
-        with torch.no_grad():
+        if not input_feature:
             if if_convert:
                 x = self.converter(x)
             x = self.image_processor(x)
             x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
             # if if_translate:
                 # x = self.translator(x)
-            if if_ortho:
-                # if if_convert:
-                #     x = self.feature_biology_translator_pcm(x)
-                # else:
-                x = self.feature_translator(x)[:, :self.bio_feature_size]
-            x = self.predictor(x, return_gate=True)
-            return x
+        if if_ortho:
+            # if if_convert:
+            #     x = self.feature_biology_translator_pcm(x)
+            # else:
+            x = self.feature_translator(x)[:, :self.bio_feature_size]
+        x = self.predictor.get_gates(x)
+        return x
 
     def compute_domain_feature(self, x: torch.Tensor, if_convert: bool=False, 
-                                 if_translate: bool=True, if_ortho: bool=True) -> torch.Tensor:
+                                 if_translate: bool=True, if_ortho: bool=True, input_feature: bool=False) -> torch.Tensor:
         '''Compute domain feature representation for the input tensor.
 
         Args:
@@ -341,19 +347,19 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             torch.Tensor: 
                 Domain feature representation of the input tensor in the shape of (batch_size, num_features).
         '''
-        with torch.no_grad():
+        if not input_feature:
             if if_convert:
                 x = self.converter(x)
             x = self.image_processor(x)
             x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
-            # if if_translate:
-                # x = self.translator(x)
-            if if_ortho:
-                # if if_convert:
-                #     x = self.feature_domain_translator_pcm(x)
-                # else:
-                x = self.feature_translator(x)[:, self.bio_feature_size:]
-            return x
+        # if if_translate:
+            # x = self.translator(x)
+        if if_ortho:
+            # if if_convert:
+            #     x = self.feature_domain_translator_pcm(x)
+            # else:
+            x = self.feature_translator(x)[:, self.bio_feature_size:]
+        return x
 
     def _marker_margin_loss(self, pred_expr: torch.Tensor, cell_types: torch.Tensor,
                             marker_dict: dict, margin: float=1.0,
