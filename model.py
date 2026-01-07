@@ -266,7 +266,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return x
     
     def compute_feature(self, x: torch.Tensor, if_convert: bool=False, 
-                        if_translate: bool=True, if_ortho: bool=True) -> torch.Tensor:
+                        if_translate: bool=True, if_ortho: bool=True, scramble=False) -> torch.Tensor:
         '''Compute feature representation for the input tensor.
 
         Args:
@@ -278,6 +278,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to use the translator for better domain alignment. Defaults to True.
             if_ortho (bool, optional): 
                 Whether to use the orthogonal translator. Defaults to True.
+            scramble (bool, optional):
+                Whether to scramble the input image for testing. Defaults to False.
 
         Returns:
             torch.Tensor: 
@@ -285,6 +287,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         '''
 
         with torch.no_grad():
+            if scramble:
+                x = x[:, :, torch.randperm(x.size(2)), :][:, :, :, torch.randperm(x.size(3))]
             if if_convert:
                 x = self.converter(x)
             x = self.image_processor(x)
@@ -301,7 +305,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             return x
 
     def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
-                     if_translate: bool=True, if_ortho: bool=True, input_feature: bool=False) -> torch.Tensor:
+                     if_translate: bool=True, if_ortho: bool=True, 
+                     input_feature: bool=False, scramble=False) -> torch.Tensor:
         '''Compute gating vector for the input tensor.
 
         Args:
@@ -313,6 +318,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to use the translator for better domain alignment. Defaults to True.
             if_ortho (bool, optional): 
                 Whether to use the orthogonal translator. Defaults to True.
+            scramble (bool, optional):
+                Whether to scramble the input image for testing. Defaults to False.
             
 
         Returns:
@@ -320,6 +327,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Gating vector of the input tensor in the shape of (num_layers, batch_size, num_features).
         '''
         if not input_feature:
+            if scramble:
+                x = x[:, :, torch.randperm(x.size(2)), :][:, :, :, torch.randperm(x.size(3))]
             if if_convert:
                 x = self.converter(x)
             x = self.image_processor(x)
@@ -335,7 +344,8 @@ class GeneExpPredVisiumHD(pl.LightningModule):
         return x
 
     def compute_domain_feature(self, x: torch.Tensor, if_convert: bool=False, 
-                                 if_translate: bool=True, if_ortho: bool=True, input_feature: bool=False) -> torch.Tensor:
+                                 if_translate: bool=True, if_ortho: bool=True, 
+                                 input_feature: bool=False, scramble=False) -> torch.Tensor:
         '''Compute domain feature representation for the input tensor.
 
         Args:
@@ -347,12 +357,16 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Whether to use the translator for better domain alignment. Defaults to True.
             if_ortho (bool, optional): 
                 Whether to use the orthogonal translator. Defaults to True.
+            scramble (bool, optional):
+                Whether to scramble the input image for testing. Defaults to False.
 
         Returns:
             torch.Tensor: 
                 Domain feature representation of the input tensor in the shape of (batch_size, num_features).
         '''
         if not input_feature:
+            if scramble:
+                x = x[:, :, torch.randperm(x.size(2)), :][:, :, :, torch.randperm(x.size(3))]
             if if_convert:
                 x = self.converter(x)
             x = self.image_processor(x)

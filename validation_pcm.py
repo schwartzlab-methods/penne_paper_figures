@@ -94,7 +94,7 @@ def main():
         pred = model(img, if_convert=not args.no_spaghetti, scramble=args.if_scramble) #shape: (n, num_genes)
         pred = pred.mean(dim=0, keepdim=True) #shape: (1, num_genes)
         # features
-        features = model.compute_feature(img, if_convert=not args.no_spaghetti)
+        features = model.compute_feature(img, if_convert=not args.no_spaghetti, scramble=args.if_scramble) #shape: (n, feature_dim)
         features = features.mean(dim=0, keepdim=True) #shape: (1, feature_dim)
         pred_L.append(pred.cpu().numpy())
         features_L.append(features.cpu().numpy())
