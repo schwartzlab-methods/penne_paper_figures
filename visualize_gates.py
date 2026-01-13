@@ -39,7 +39,8 @@ def main():
                         help="Path to the file with genes to use, or the name of the gene. If no supplied, use all genes")  
     parser.add_argument("--plot_per_gene", action="store_true",
                         help="Whether to plot per-gene gate correlation heatmaps. If set, will plot gene x gate correlation matrix.")
-    parser.add_argument("--max_num_clusters", type=int, default=6, help="Maximum number of clusters for gating vectors")               
+    parser.add_argument("--max_num_clusters", type=int, default=6, help="Maximum number of clusters for gating vectors")
+    parser.add_argument("--scramble", action="store_true", help="Whether to scramble the input images for testing as a baseline.")               
     parser.add_argument("--output_dir", type=str, required=True, help="Path to the output directory")
     args = parser.parse_args()
 
@@ -104,7 +105,7 @@ def main():
         for img, label in tqdm(loader):
             img = img.to(model.device)
             img = img.squeeze(0) #remove the default batch dimension
-            pred = model(img, if_convert=True) #shape: num_patch, num_genes
+            pred = model(img, if_convert=True, scramble=args.scramble) #shape: num_patch, num_genes
             # get only the genes we want
             pred = pred[:, gene_indices] # shape: num_patch, num_genes_used
             pred_L.append(pred.cpu().numpy())
@@ -145,8 +146,8 @@ def main():
         plt.close()
         print("Gate correlation heatmap saved to ", args.output_dir)
     else:
-        # generate a gene x gate matrix of correlation values, then cluster genes based on gate correlation profiles
-        print("Generating gene x gate correlation matrix...")
+        # generate a gene x gene matrix of correlation values, then cluster genes based on gate correlation profiles
+        print("Generating gene x gene correlation matrix...")
         gene_gate_corr = np.zeros((num_genes_used, gate_dim))
         for gene_idx in tqdm(range(num_genes_used)):
             gene_exp = pred_L[:, gene_idx].reshape(-1) # shape: num_samples
