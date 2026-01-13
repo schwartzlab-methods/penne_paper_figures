@@ -466,7 +466,7 @@ class ShaneSeqDataset(Dataset):
         return imgs, (torch.tensor([0 if cell_type == "MCF10A" else 1 if cell_type == "HCT116" else 2]), 
                       img_path, cell_type, treatment, exp)
 
-#* Shane's seuqnecing for cell type identification
+#* Shane's sequencing for cell type identification
 class ShaneSeqCellTypeDataset(Dataset):
     '''Dataset for Shane's sequencing data for cell type identification.
     In this dataset, there are phase images and green chanel GFP images
@@ -475,13 +475,14 @@ class ShaneSeqCellTypeDataset(Dataset):
 
     This dataset class can also be used to estimate the amount of mitotic cells in the image if the GFP is a mitotic marker.
     '''
-    def __init__(self, path, load_mitotitc: bool = False):
+    def __init__(self, path, load_mitotic: bool = False):
         super(ShaneSeqCellTypeDataset, self).__init__()
         self.path = path
         self.imgs = []
         self.image_names = []
         self.gfp_imgs = []
-        if load_mitotitc:
+        self.load_mitotic = load_mitotic
+        if load_mitotic:
             self._load_data_coculture_mitotic()
         else:
             self._load_data_coculture()
@@ -634,14 +635,23 @@ class ShaneSeqCellTypeDataset(Dataset):
         batch_rgb: (B,3,H,W) in [0,1]
         returns: (B,) tensor of % bright green area
         """
+        from skimage.filters import threshold_otsu
         batch_size = batch_rgb.shape[0]
         gfp_vals = []
         # cell_masks = self.segment_cells_from_phase(phase_imgs)
-        thr = 100 / 255.0  # fixed threshold for GFP, select only very bright areas
+        # thr = 55 / 255.0  # fixed threshold for GFP, select only very bright areas
+        # mean = batch_rgb[:,1].mean()  # mean green channel per patch globally
+        # std = batch_rgb[:,1].std()    # std dev of green channel per patch globally
+        # thr = max(mean - 1 * std, 1.0)
+
         for i in range(batch_size):
             gfp_img = batch_rgb[i].cpu().numpy() # (3,H,W)
             # get only the green channel
             gfp_img = gfp_img[1,:,:]  # (H,W)
+            bg_mean = np.mean(gfp_img)
+            bg_std = np.std(gfp_img)
+            thr = bg_mean + 1.5 * bg_std # dynamic threshold based on background
+
             # compute simple threshold
             bright_mask = gfp_img >= thr
             # # estimate % area of bright green cells
@@ -649,6 +659,7 @@ class ShaneSeqCellTypeDataset(Dataset):
             # cell_pixels = cell_mask.sum()
             # bright_pixels = (bright_mask & cell_mask).sum()
             # percent = bright_pixels / (cell_pixels + 1e-9)
+
             percent = bright_mask.sum() / (gfp_img.size + 1e-9)
             gfp_vals.append(percent)
         return torch.tensor(gfp_vals, device=batch_rgb.device) #shape (B,)
@@ -722,10 +733,73 @@ class ShaneSeqCellTypeDataset(Dataset):
             results.append(percent)
         return torch.tensor(results, device=batch_rgb.device) #shape (B,)
 
-    def mean_gfp_intensity(self, batch_rgb, phase_imgs):
+    def _mean_gfp_intensity(self, batch_rgb, phase_imgs):
         g = batch_rgb[:,1]   # assume GFP = channel 1
-        cell_mask = self.segment_cells_from_phase(phase_imgs)
-        return (g*cell_mask).sum(dim=[1,2]) / (cell_mask.sum(dim=[1,2])+1e-9) #shape (B,)
+        # cell_mask = self.segment_cells_from_phase(phase_imgs)
+        # return (g*cell_mask).sum(dim=[1,2]) / (cell_mask.sum(dim=[1,2])+1e-9) #shape (B,)
+        thr = 40 / 255.0
+        g = g * (g >= thr) # threshold to remove background
+        return g.mean(dim=[1,2])  # shape (B,)
+
+
+    def _quantify_greenness_with_integrated_density(self, gfp_img: torch.Tensor):
+        """
+        Quantifies green fluorescence from an RGB image.
+        
+        Args:
+            gfp_img (torch.Tensor): Shape (B, 3, H, W). 
+                                   Assumes channel 0=R, 1=G, 2=B.
+        
+        Returns:
+            torch.Tensor: Shape (B,). Integrated density of green fluorescence per image.
+        """
+        from skimage.filters import threshold_otsu
+        # 1. Extract Green Channel
+        # Shape is (3, H, W), so Green is at index 1
+        green_channel = gfp_img[:, 1, :, :] # Shape (B, H, W)
+        green_channel = green_channel.cpu().numpy()  # Convert to NumPy for processing
+
+        # 3. Background Subtraction
+        # We estimate background intensity by looking at the dimmest pixels.
+        # A safe bet is the 5th percentile (to ignore dead pixels/absolute black).
+        background_level = np.percentile(green_channel, 5)
+        
+        # Subtract background, clipping negative values to 0
+        green_corrected = np.maximum(green_channel - background_level, 0)
+
+        # get a global ostsu threshold across the batch
+        # thresh_val = threshold_otsu(green_corrected.flatten())
+
+        # # get a threshold using mean + 3*std
+        # mean_intensity = np.mean(green_corrected)
+        # std_intensity = np.std(green_corrected)
+        # thresh_val = mean_intensity + 3 * std_intensity
+
+        green_L = []
+        for i in range(gfp_img.shape[0]):
+            current_green = green_corrected[i]
+            # get a threshold using mean and std
+            mean_intensity = np.mean(current_green)
+            std_intensity = np.std(current_green)
+            thresh_val = mean_intensity + 2 * std_intensity
+
+            binary_mask = current_green > thresh_val
+            green = np.sum(current_green[binary_mask]) # shape: scalar
+         
+            # Mean Intensity: Average brightness of the spots only
+            # green = np.mean(current_green[binary_mask]) if np.sum(binary_mask) > 0 else 0.0
+            
+        #     # Spot Area: How many pixels are glowing?
+        #     spot_area_pixels = np.sum(binary_mask)
+
+            # return {
+            #     "integrated_density": integrated_density, # Best for "Total Amount"
+            #     "mean_intensity": mean_intensity,         # Best for "Concentration"
+            #     "background_level": background_level,
+            #     "mask": binary_mask
+            # }
+            green_L.append(green)
+        return torch.tensor(green_L, device=gfp_img.device)  # shape (B,)
 
     def __len__(self):
         return len(self.imgs)
@@ -740,14 +814,26 @@ class ShaneSeqCellTypeDataset(Dataset):
             img = img / 255.0
         if gfp_img.max().item() > 1:
             gfp_img = gfp_img / 255.0
+        # only get the cntral 50% of the image to avoid edge effects
+        _, H, W = img.shape
+        h_start = int(0.25 * H)
+        h_end = int(0.75 * H)
+        w_start = int(0.25 * W)
+        w_end = int(0.75 * W)
+        img = img[:, h_start:h_end, w_start:w_end]
+        gfp_img = gfp_img[:, h_start:h_end, w_start:w_end]
         # make them all 256x256 patches
         img_patches = self.extract_full_patches(img)
         gfp_patches = self.extract_full_patches(gfp_img)
         # compute the gfp value for each patch
         # gfp_values = self._extract_gfp_value(gfp_patches, img_patches).view(-1, 1)
-        # gfp_values = self.mean_gfp_intensity(gfp_patches, img_patches).view(-1, 1)
+        # gfp_values = self._mean_gfp_intensity(gfp_patches, img_patches).view(-1, 1)
         # gfp_values = self._extract_gfp_value_filter(gfp_patches, img_patches).view(-1, 1)
-        gfp_values = self._extract_gfp_value_threshold(gfp_patches, img_patches).view(-1, 1)
+        # gfp_values = self._extract_gfp_value_threshold(gfp_patches, img_patches).view(-1, 1)
+        if self.load_mitotic: # quantify with integrated density since we care about the amount of GFP
+            gfp_values = self._quantify_greenness_with_integrated_density(gfp_patches).view(-1, 1)
+        else: # we treat this as a binary classification problem, so percentage is sufficient
+            gfp_values = self._extract_gfp_value_threshold(gfp_patches, img_patches).view(-1, 1)
         return img_patches, (gfp_values, img_name, gfp_patches)
     
 #* Shane's seuqnecing for confluency
