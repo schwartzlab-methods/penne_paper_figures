@@ -245,6 +245,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 Output tensor of the gene expression inference in the shape of (batch_size, num_genes).
         '''
         # if_convert is used to determine whether to use the converter or not
+        torch.manual_seed(42)
         if not input_feature:
             if scramble:
                 x = x[:, :, torch.randperm(x.size(2)), :][:, :, :, torch.randperm(x.size(3))]
@@ -285,7 +286,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             torch.Tensor: 
                 Feature representation of the input tensor in the shape of (batch_size, num_features).
         '''
-
+        torch.manual_seed(42)
         with torch.no_grad():
             if scramble:
                 x = x[:, :, torch.randperm(x.size(2)), :][:, :, :, torch.randperm(x.size(3))]
@@ -326,6 +327,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             torch.Tensor: 
                 Gating vector of the input tensor in the shape of (num_layers, batch_size, num_features).
         '''
+        torch.manual_seed(42)
         if not input_feature:
             if scramble:
                 x = x[:, :, torch.randperm(x.size(2)), :][:, :, :, torch.randperm(x.size(3))]
@@ -364,6 +366,7 @@ class GeneExpPredVisiumHD(pl.LightningModule):
             torch.Tensor: 
                 Domain feature representation of the input tensor in the shape of (batch_size, num_features).
         '''
+        torch.manual_seed(42)
         if not input_feature:
             if scramble:
                 x = x[:, :, torch.randperm(x.size(2)), :][:, :, :, torch.randperm(x.size(3))]
