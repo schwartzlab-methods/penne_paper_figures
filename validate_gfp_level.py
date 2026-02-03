@@ -22,16 +22,16 @@ import seaborn as sns
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 import pandas as pd
-from scipy.stats import spearmanr, fisher_exact
+from scipy.stats import spearmanr, fisher_exact, pearsonr
 # from sklearn.feature_selection import mutual_info_regression
-from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.metrics import r2_score
-from scipy.stats import pearsonr
 import umap
 from toomanycells import TooManyCells as tmc
 import anndata as ad
 from exp_analysis.gene_set_expression import read_tsv
 from itertools import chain
+import gseapy as gp
 
 import altair as alt
 ## plotting settings
@@ -104,6 +104,86 @@ def compute_number_of_correct_features(coef_df, marker_mcf10a, marker_hct116, ou
         f.write(f"{num_top_hct116}, {len(pos_features) - num_top_hct116}\n")
         f.write(f"{num_bottom_hct116}, {len(neg_features) - num_bottom_hct116}\n")
 
+def enrichr_analysis(coef_df, database, output, name="", up_thresh=0, down_thresh=0):
+    '''
+    run enrichr analysis on the top and bottom gene from database (str or dict)
+    '''
+    pos_features = coef_df[coef_df['Coefficient'] > up_thresh]["Gene"].values.reshape(-1)
+    neg_features = coef_df[coef_df['Coefficient'] < down_thresh]["Gene"].values.reshape(-1)
+    # run enrichr
+    enr_pos = gp.enrichr(gene_list=pos_features.tolist(),
+                        gene_sets=database,
+                        outdir=None,
+                        verbose=True)
+    enr_neg = gp.enrichr(gene_list=neg_features.tolist(),
+                        gene_sets=database,
+                        outdir=None,
+                        verbose=True)
+    pos_sorted = enr_pos.results.sort_values(by='Combined Score', ascending=False)
+    pos_final = pos_sorted[pos_sorted['Adjusted P-value'] < 0.05]
+    pos_final = pos_final[pos_final["Combined Score"] > 0]
+    neg_sorted = enr_neg.results.sort_values(by='Combined Score', ascending=False)
+    neg_final = neg_sorted[neg_sorted['Adjusted P-value'] < 0.05]
+    neg_final = neg_final[neg_final["Combined Score"] > 0]
+    # save results
+    pos_final.to_csv(os.path.join(output, f"shane_feature_linear_enrichr_pos_{name}.csv"), index=False)
+    neg_final.to_csv(os.path.join(output, f"shane_feature_linear_enrichr_neg_{name}.csv"), index=False)
+    # plot top 10 terms for both
+    top_pos = pos_final.head(10)
+    top_neg = neg_final.head(10)
+    plt.figure(figsize=(16, 6))
+    plt.subplot(1, 2, 1)
+    sns.barplot(x='Combined Score', y='Term', data=top_pos, color='blue')
+    plt.title('Top 10 Enrichr Terms for Positive Features')
+    plt.subplot(1, 2, 2)
+    sns.barplot(x='Combined Score', y='Term', data=top_neg, color='red')
+    plt.title('Top 10 Enrichr Terms for Negative Features')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output, f"shane_feature_linear_enrichr_{name}.png"))
+    plt.close()
+
+def prerank_gsea(coef_df, database, output, name=""):
+    '''
+    run prerank gsea analysis on the top and bottom gene from gmt file
+    '''
+    # create preranked file
+    prerank_df = coef_df[['Gene', 'Coefficient']]
+    prerank_df_sorted = prerank_df.sort_values(by='Coefficient', ascending=False)
+    # reindex
+    prerank_df_sorted = prerank_df_sorted.loc[:, ['Gene', 'Coefficient']]
+    # run prerank
+    pre_res = gp.prerank(rnk=prerank_df_sorted,
+                         gene_sets=database,
+                         outdir=None,
+                         threads=4,
+                         min_size=1,
+                         max_size=10000,
+                         permutation_num=1000,
+                         seed=42,
+                         verbose=True)
+    pre_sorted = pre_res.res2d.sort_values(by='NES', ascending=False)
+    
+    up_terms = pre_sorted[pre_sorted['NES'] > 0]
+    down_terms = pre_sorted[pre_sorted['NES'] < 0]
+    # save results
+    pre_sorted.to_csv(os.path.join(output, f"shane_feature_linear_prerank_gsea_{name}.csv"), index=False)
+    # plot top 10 terms for both
+    top_terms = up_terms.head(10)
+    plt.figure(figsize=(16, 6))
+    sns.barplot(x='NES', y='Term', data=top_terms, color='green')
+    plt.title('Top 10 Prerank GSEA Terms')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output, f"shane_feature_linear_prerank_gsea_{name}_up.png"))
+    plt.close()
+    
+    top_terms_down = down_terms.head(10)
+    plt.figure(figsize=(16, 6))
+    sns.barplot(x='NES', y='Term', data=top_terms_down, color='red')
+    plt.title('Top 10 Prerank GSEA Terms (Down)')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output, f"shane_feature_linear_prerank_gsea_{name}_down.png"))
+    plt.close()
+
 def linear_regression(X, X_label, y, out):
     '''
     Perform linear regression on the given data.
@@ -113,6 +193,7 @@ def linear_regression(X, X_label, y, out):
 
     # reg = LinearRegression()
     reg = Ridge(alpha=1.0)
+    # reg = Lasso(alpha=0.1)
     reg.fit(X, y)
     y_pred = reg.predict(X)
     # p-values and r2
@@ -136,8 +217,8 @@ def linear_regression(X, X_label, y, out):
     plt.savefig(os.path.join(out, "shane_cell_type_ridge_regression.png"))
     plt.close()
 
-    print(f"Linear Regression R2 score: {r2:.4f}")
-    print(f"Linear Regression p-value: {p_value:.4e}")
+    print(f"Ridge Regression R2 score: {r2:.4f}")
+    print(f"Ridge Regression p-value: {p_value:.4e}")
 
     if X_label is not None:
         coef_df = pd.DataFrame({
@@ -154,6 +235,15 @@ def linear_regression(X, X_label, y, out):
         "Actual": y.flatten(),
         "Prediction": y_pred.flatten()
     })
+
+    # altair plot
+    scatter = alt.Chart(pred_df).mark_circle(opacity=0.5).encode(
+        x='Actual:Q',
+        y='Prediction:Q',
+        tooltip=['Actual', 'Prediction']
+    ).interactive()
+    chart = scatter + scatter.transform_regression('Actual', 'Prediction').mark_line(color='red')
+    chart.save(os.path.join(out, "shane_cell_type_ridge_regression_altair.html"))
 
     return pred_df, coef_df, r2, p_value
 
@@ -176,7 +266,12 @@ def main():
                         help="Path to the file with genes to use. If no supplied, use all genes")
     parser.add_argument("--threshold", type=float, default=10.0,
                         help="Threshold for filtering genes based on correlation. Range: [0,100]")
+    parser.add_argument("--scramble", action="store_true", help="Whether to scramble/permute the input images for baseline evaluation")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to the output directory")
+    parser.add_argument("--load", action="store_true", help="Whether to load existing predictions")
+    parser.add_argument("--test_mcf_hct", action="store_true", help="Whether to test MCF10A and HCT116 marker gene enrichment")
+    parser.add_argument("--show_example", action="store_true", help="Whether to show example images with high and low GFP levels")
+    parser.add_argument("--run_dim_reduction", action="store_true", help="Whether to run dimensionality reduction (PCA, UMAP, TMC)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -202,9 +297,12 @@ def main():
     print("Gene symbols saved to ", args.output_dir)
     num_genes = gene_names.shape[0]
     try:
-        pred_L = np.load(os.path.join(args.output_dir, f"shane_cell_type_pred.npy"))
-        gfp_L = np.load(os.path.join(args.output_dir, f"shane_cell_type_gfp.npy"))
-        img_name_L = np.load(os.path.join(args.output_dir, f"shane_cell_type_img_names.npy"))
+        if args.load:
+            pred_L = np.load(os.path.join(args.output_dir, f"shane_cell_type_pred.npy"))
+            gfp_L = np.load(os.path.join(args.output_dir, f"shane_cell_type_gfp.npy"))
+            img_name_L = np.load(os.path.join(args.output_dir, f"shane_cell_type_img_names.npy"))
+        else:
+            raise FileNotFoundError
     except FileNotFoundError:
         # prep model
         model = GeneExpPredVisiumHD.load_from_checkpoint(args.model_path, num_genes = num_genes, 
@@ -217,24 +315,77 @@ def main():
         pred_L = []
         gfp_L = []
         img_name_L = []
+        img_L = []
+        pcm_img_L = []
         with torch.no_grad():
             for img, label in tqdm(loader):
                 img = img.to(model.device)
                 img = img.squeeze(0) #remove the default batch dimension
-                pred = model(img, if_convert=not args.no_spaghetti) #shape: num_patches, num_genes
+                pred = model(img, if_convert=not args.no_spaghetti, scramble=args.scramble) #shape: num_patches, num_genes
                 pred_L.append(pred.cpu().numpy())
                 gfp_L.append(np.array(label[0]))
                 img_name_L.append(np.array(label[1], dtype=str))
+                img_L.append(label[2][0].cpu().numpy())
+                pcm_img_L.append(img.cpu().numpy())
         pred_L = np.concatenate(pred_L, axis=0) # shape: num_samples, num_genes
         gfp_L = np.concatenate(gfp_L, axis=0).reshape(-1) # shape: num_samples
         img_name_L = np.concatenate(img_name_L, axis=0).reshape(-1) # shape: num_samples
+        img_L = np.concatenate(img_L, axis=0) # shape: num_samples, channels, height, width
+        pcm_img_L = np.concatenate(pcm_img_L, axis=0) # shape: num_samples, channels, height, width
         # save
         np.save(os.path.join(args.output_dir, f"shane_cell_type_pred.npy"), pred_L)
         np.save(os.path.join(args.output_dir, f"shane_cell_type_gfp.npy"), gfp_L)
         np.save(os.path.join(args.output_dir, f"shane_cell_type_img_names.npy"), img_name_L)
+    
+    # plot green fluorescence distribution
+    plt.figure(figsize=(8,6))
+    sns.histplot(gfp_L, bins=50, kde=True)
+    plt.title("Distribution of GFP Levels")
+    plt.xlabel("GFP Level")
+    plt.ylabel("Count")
+    plt.savefig(os.path.join(args.output_dir, "shane_cell_type_gfp_distribution.png"))
+    plt.close()
 
+    if args.show_example and not args.load:
+        # show example images with high and low GFP levels
+        sorted_indices = np.argsort(gfp_L)
+        low_indices = sorted_indices[:5]
+        high_indices = sorted_indices[-5:]
+        fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+        for i, idx in enumerate(low_indices):
+            img = img_L[idx]
+            img_np = np.transpose(img, (1, 2, 0))
+            axes[0, i].imshow(img_np)
+            axes[0, i].set_title(f"Low GFP: {gfp_L[idx]:.4f}")
+            axes[0, i].axis('off')
+        for i, idx in enumerate(high_indices):
+            img = img_L[idx]
+            img_np = np.transpose(img, (1, 2, 0))
+            axes[1, i].imshow(img_np)
+            axes[1, i].set_title(f"High GFP: {gfp_L[idx]:.4f}")
+            axes[1, i].axis('off')
+        plt.suptitle("Example Images with Low and High GFP Levels")
+        plt.savefig(os.path.join(args.output_dir, "shane_cell_type_example_images.png"))
+        plt.close()
+        # show example PCM images with high and low GFP levels
+        fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+        for i, idx in enumerate(low_indices):
+            pcm_img = pcm_img_L[idx]
+            pcm_img_np = np.transpose(pcm_img, (1, 2, 0))
+            axes[0, i].imshow(pcm_img_np)
+            axes[0, i].set_title(f"Low GFP: {gfp_L[idx]:.4f}")
+            axes[0, i].axis('off')
+        for i, idx in enumerate(high_indices):
+            pcm_img = pcm_img_L[idx]
+            pcm_img_np = np.transpose(pcm_img, (1, 2, 0))
+            axes[1, i].imshow(pcm_img_np)
+            axes[1, i].set_title(f"High GFP: {gfp_L[idx]:.4f}")
+            axes[1, i].axis('off')
+        plt.suptitle("Example PCM Images with Low and High GFP Levels")
+        plt.savefig(os.path.join(args.output_dir, "shane_cell_type_example_pcm_images.png"))
+        plt.close()
     # load marker gene file
-    if args.gmt_file:
+    if args.gmt_file and args.test_mcf_hct: # compute correlation with marker genes
         signature = read_tsv(args.gmt_file)
 
         marker_mcf10a = sorted(set(chain.from_iterable(
@@ -254,25 +405,46 @@ def main():
         pred_L = pred_L[:,mask]
         gene_names = gene_names[mask]
 
-    if args.only_markers:
+    if args.test_mcf_hct:
         # get the mcf10a marker expressions
-        mask = np.isin(gene_names, marker_mcf10a)
+        mask_mcf = np.isin(gene_names, marker_mcf10a)
         mask_hct = np.isin(gene_names, marker_hct116)
+        mask_either = mask_mcf | mask_hct
         pred_L_hct = np.mean(pred_L[:,mask_hct], axis=1, keepdims=True)
-        pred_L = pred_L[:,mask] # shape: num_samples, num_marker_genes
-        pred_L = np.mean(pred_L, axis=1, keepdims=True) # shape: num_samples, marker_gene_exp
-        gene_names = gene_names[mask]
-        corr = np.corrcoef(pred_L.flatten(), gfp_L.flatten())[0,1]
-        print(f"Correlation between mean MCF10A marker gene expression and GFP levels: {corr:.4f}")
-        corr_hct = np.corrcoef(pred_L_hct.flatten(), gfp_L.flatten())[0,1]
-        print(f"Correlation between mean HCT116 marker gene expression and GFP levels: {corr_hct:.4f}")
-    else:
-        # remove features (genes) that only have 0
-        non_zero_genes = np.any(pred_L != 0, axis=0)
-        pred_L = pred_L[:,non_zero_genes]
-        gene_names = gene_names[non_zero_genes]
-        assert pred_L.shape[1] == gene_names.shape[0]
-        print("Number of genes after filtering zero genes:", gene_names.shape[0])
+        pred_L_mcf = pred_L[:,mask_mcf] # shape: num_samples, num_marker_genes
+        pred_L_mcf = np.mean(pred_L_mcf, axis=1, keepdims=True) # shape: num_samples, marker_gene_exp
+        pred_L_neither = pred_L[:,~mask_either]
+        pred_L_neither = np.mean(pred_L_neither, axis=1, keepdims=True)
+        # compute both spearman and pearson correlation
+        spearman_mcf, p_value_mcf = spearmanr(pred_L_mcf.flatten(), gfp_L.flatten())
+        print(f"Spearman correlation between mean MCF10A marker gene expression and GFP levels: {spearman_mcf:.4f} (p-value: {p_value_mcf:.4e})")
+        spearman_hct, p_value_hct = spearmanr(pred_L_hct.flatten(), gfp_L.flatten())
+        print(f"Spearman correlation between mean HCT116 marker gene expression and GFP levels: {spearman_hct:.4f} (p-value: {p_value_hct:.4e})")
+        spearman_neither, p_value_neither = spearmanr(pred_L_neither.flatten(), gfp_L.flatten())
+        print(f"Spearman correlation between mean non-marker gene expression and GFP levels: {spearman_neither:.4f} (p-value: {p_value_neither:.4e})")
+        pearson_mcf, p_value_mcf_pearson = pearsonr(pred_L_mcf.flatten(), gfp_L.flatten())
+        print(f"Pearson correlation between mean MCF10A marker gene expression and GFP levels: {pearson_mcf:.4f} (p-value: {p_value_mcf_pearson:.4e})")
+        pearson_hct, p_value_hct_pearson = pearsonr(pred_L_hct.flatten(), gfp_L.flatten())
+        print(f"Pearson correlation between mean HCT116 marker gene expression and GFP levels: {pearson_hct:.4f} (p-value: {p_value_hct_pearson:.4e})")
+        pearson_neither, p_value_neither_pearson = pearsonr(pred_L_neither.flatten(), gfp_L.flatten())
+        print(f"Pearson correlation between mean non-marker gene expression and GFP levels: {pearson_neither:.4f} (p-value: {p_value_neither_pearson:.4e})")
+        with open(os.path.join(args.output_dir, "shane_cell_type_marker_gene_correlations.txt"), "w") as f:
+            f.write("Spearman Correlations:\n")
+            f.write(f"MCF10A: {spearman_mcf:.4f} (p-value: {p_value_mcf:.4e})\n")
+            f.write(f"HCT116: {spearman_hct:.4f} (p-value: {p_value_hct:.4e})\n")
+            f.write(f"Non-marker genes: {spearman_neither:.4f} (p-value: {p_value_neither:.4e})\n")
+            f.write("\nPearson Correlations:\n")
+            f.write(f"MCF10A: {pearson_mcf:.4f} (p-value: {p_value_mcf_pearson:.4e})\n")
+            f.write(f"HCT116: {pearson_hct:.4f} (p-value: {p_value_hct_pearson:.4e})\n")
+            f.write(f"Non-marker genes: {pearson_neither:.4f} (p-value: {p_value_neither_pearson:.4e})\n")
+
+    # remove features (genes) that only have 0
+    non_zero_genes = np.any(pred_L != 0, axis=0)
+    pred_L = pred_L[:,non_zero_genes]
+    gene_names = gene_names[non_zero_genes]
+    assert pred_L.shape[1] == gene_names.shape[0]
+    print("Number of genes after filtering zero genes:", gene_names.shape[0])
+    if args.test_mcf_hct:
         num_genes_in_mcf10a = sum([1 if g in marker_mcf10a else 0 for g in gene_names])
         num_genes_in_hct116 = sum([1 if g in marker_hct116 else 0 for g in gene_names])
         print(f"Number of genes after filtering in MCF10A: {num_genes_in_mcf10a}")
@@ -287,12 +459,29 @@ def main():
     if args.gmt_file and not args.only_markers:
         top_ten_percent_coef = np.percentile(coef_df["Coefficient"], 100 - args.threshold)
         bottom_ten_percent_coef = np.percentile(coef_df["Coefficient"], args.threshold)
-        compute_number_of_correct_features(coef_df, marker_mcf10a, marker_hct116, args.output_dir, name="ridge",
-                                            up_thresh=top_ten_percent_coef, down_thresh=bottom_ten_percent_coef)
+        if args.test_mcf_hct:
+            compute_number_of_correct_features(coef_df, marker_mcf10a, marker_hct116, args.output_dir, name="ridge",
+                                                up_thresh=top_ten_percent_coef, down_thresh=bottom_ten_percent_coef)
+            # plot coefficients and label MCF10A or HCT116 or neither with three colours using altair tick plot
+            coef_df["Colour"] = ["MCF10A Marker" if g in marker_mcf10a 
+                                else "HCT116 Marker" if g in marker_hct116 
+                                else "Neither" 
+                                for g in coef_df["Gene"]]
+            coef_df = coef_df.sort_values(by="Coefficient", ascending=False)
+            ticks = alt.Chart(coef_df).mark_tick(opacity=0.5, thickness=1).encode(
+                color=alt.Color('Colour:N', scale=alt.Scale(domain=["MCF10A Marker", "HCT116 Marker", "Neither"], range=["red", "blue", "grey"])),
+                x=alt.X('Coefficient:Q', title='Ridge Coefficient')
+            ).interactive()
+            ticks.save(os.path.join(args.output_dir, "shane_cell_type_ridge_coefficients.html"))
+        # run enrichr analysis
+        enrichr_analysis(coef_df, database=args.gmt_file, output=args.output_dir, name="ridge",
+                        up_thresh=top_ten_percent_coef, down_thresh=bottom_ten_percent_coef)
+        # run prerank gsea
+        prerank_gsea(coef_df, database=args.gmt_file, output=args.output_dir, name="ridge")
 
     # compute correlation statistics
     if not args.only_markers:
-        print("Correlating Features")
+        print("Correlating Features using Pearson and Spearman from expression to GFP levels")
         corr_df = feature_label_analysis(pred_L, gene_names, gfp_L)
         corr_df.to_csv(os.path.join(args.output_dir, "shane_cell_type_corr.csv"), index=False)
         # plot violin plots for each stats
@@ -305,28 +494,35 @@ def main():
         plt.ylabel("Correlation Statistics")
         plt.savefig(os.path.join(args.output_dir, "shane_cell_type_corr_violin.png"))
         plt.close()
-        # plot scatter plot between Pearson and Spearman, allow tool tip labels to select genes
-        # colour if gene is in MCF10A (red) or HCT116 (blue) or none (grey)
-        # plot red and blue points on top of grey points
-        corr_df["Colour"] = ["MCF10A Marker" if g in marker_mcf10a 
-                            else "HCT116 Marker" if g in marker_hct116 
-                            else "Neither" 
-                            for g in corr_df["Gene"]]
-        corr_df = corr_df.sort_values(by="Colour", ascending=False)
-        scatter = alt.Chart(corr_df).mark_circle(opacity=0.5).encode(
-            x='Pearson:Q',
-            y='Spearman:Q',
-            color=alt.Color('Colour:N', scale=alt.Scale(domain=["MCF10A Marker", "HCT116 Marker", "Neither"], range=["red", "blue", "grey"])),
-            tooltip=['Gene', 'Pearson', 'Spearman']
-        ).interactive()
-        scatter.save(os.path.join(args.output_dir, "shane_cell_type_corr_scatter.html"))
+        if args.test_mcf_hct:
+            # plot scatter plot between Pearson and Spearman, allow tool tip labels to select genes
+            # colour if gene is in MCF10A (red) or HCT116 (blue) or none (grey)
+            # plot red and blue points on top of grey points
+            corr_df["Colour"] = ["MCF10A Marker" if g in marker_mcf10a 
+                                else "HCT116 Marker" if g in marker_hct116 
+                                else "Neither" 
+                                for g in corr_df["Gene"]]
+            corr_df = corr_df.sort_values(by="Colour", ascending=False)
+            scatter = alt.Chart(corr_df).mark_circle(opacity=0.5).encode(
+                x='Pearson:Q',
+                y='Spearman:Q',
+                color=alt.Color('Colour:N', scale=alt.Scale(domain=["MCF10A Marker", "HCT116 Marker", "Neither"], range=["red", "blue", "grey"])),
+                tooltip=['Gene', 'Pearson', 'Spearman']
+            ).interactive()
+            scatter.save(os.path.join(args.output_dir, "shane_cell_type_corr_scatter.html"))
         # rename columns for fisher exact test
         corr_df["Coefficient"] = corr_df["Pearson"] + corr_df["Spearman"] # simple sum
         top_ten_percent_coef = np.percentile(corr_df["Coefficient"], 100 - args.threshold)
         bottom_ten_percent_coef = np.percentile(corr_df["Coefficient"], args.threshold)
-        compute_number_of_correct_features(corr_df, marker_mcf10a, marker_hct116, args.output_dir, name="correlation",
-                                            up_thresh=top_ten_percent_coef, down_thresh=bottom_ten_percent_coef)
+        if args.test_mcf_hct:
+            compute_number_of_correct_features(corr_df, marker_mcf10a, marker_hct116, args.output_dir, name="correlation",
+                                                up_thresh=top_ten_percent_coef, down_thresh=bottom_ten_percent_coef)
+        # run enrichr analysis
+        enrichr_analysis(corr_df, database=args.gmt_file, output=args.output_dir, name="correlation",
+                        up_thresh=top_ten_percent_coef, down_thresh=bottom_ten_percent_coef)
+        prerank_gsea(corr_df, database=args.gmt_file, output=args.output_dir, name="correlation")
 
+    if args.run_dim_reduction:
         # compute PCA according to gene expression profiles
         print("Running PCA")
         pca = PCA(n_components=2)
