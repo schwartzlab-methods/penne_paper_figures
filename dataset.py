@@ -9,6 +9,8 @@ import scanpy as sc
 import torchvision.transforms.v2 as v2
 import torch
 import torch.nn.functional as F
+from cellpose import models
+import torchvision.transforms.v2.functional as TF
 
 #! Microscopy only datasets
 class LiveCellDataset(Dataset):
@@ -466,7 +468,7 @@ class ShaneSeqDataset(Dataset):
         return imgs, (torch.tensor([0 if cell_type == "MCF10A" else 1 if cell_type == "HCT116" else 2]), 
                       img_path, cell_type, treatment, exp)
 
-#* Shane's seuqnecing for cell type identification
+#* Shane's sequencing for cell type identification
 class ShaneSeqCellTypeDataset(Dataset):
     '''Dataset for Shane's sequencing data for cell type identification.
     In this dataset, there are phase images and green chanel GFP images
@@ -475,13 +477,14 @@ class ShaneSeqCellTypeDataset(Dataset):
 
     This dataset class can also be used to estimate the amount of mitotic cells in the image if the GFP is a mitotic marker.
     '''
-    def __init__(self, path, load_mitotitc: bool = False):
+    def __init__(self, path, load_mitotic: bool = False):
         super(ShaneSeqCellTypeDataset, self).__init__()
         self.path = path
         self.imgs = []
         self.image_names = []
         self.gfp_imgs = []
-        if load_mitotitc:
+        self.load_mitotic = load_mitotic
+        if load_mitotic:
             self._load_data_coculture_mitotic()
         else:
             self._load_data_coculture()
@@ -616,8 +619,8 @@ class ShaneSeqCellTypeDataset(Dataset):
         smooth = gaussian_blur(phase_imgs, kernel_size=11)
 
         # Invert (cells usually darker in phase)
-        # inv = 1.0 - smooth
-        inv = smooth
+        inv = 1.0 - smooth
+        # inv = smooth
 
         masks = []
         for i in range(phase_imgs.shape[0]):
@@ -629,19 +632,51 @@ class ShaneSeqCellTypeDataset(Dataset):
             masks.append(mask)
         return torch.stack(masks, dim=0)  # (B,H,W)
 
+    def segment_cells_cellpose(self, imgs):
+        '''
+        Use CellPose to segment cells from phase or GFP images.
+        imgs: (B,3,H,W) or (B,H,W) or (B,1,H,W) in [0,1]
+        returns: (B,H,W) with integer labels of masks of cells
+        '''
+        model = models.CellposeModel(model_type='cyto3', gpu=torch.cuda.is_available())
+        B = imgs.shape[0]
+        all_masks = []
+        for i in range(B):
+            img = imgs[i]
+            img_np = img.permute(1,2,0).cpu().numpy()  # (H,W,3) or (H,W) or (H,W,1)
+            img_gray = img_np.mean(axis=2) if img_np.ndim == 3 else img_np.squeeze()  # (H,W)
+            try:
+                masks, _, _ = model.eval(img_gray, diameter=None, channels=[0,0],
+                                        flow_threshold=0.4, cellprob_threshold=0, min_size=10) # (H,W) with integer labels
+            except IndexError:
+                # sometimes cellpose throws an index error, in that case return empty mask
+                print("CellPose index error, returning empty mask")
+                masks = np.zeros_like(img_gray, dtype=np.int32)
+            all_masks.append(torch.tensor(masks, device=imgs.device).long())
+        return torch.stack(all_masks, dim=0) # (B,H,W) with integer labels
+
     def _extract_gfp_value_threshold(self, batch_rgb: torch.Tensor, phase_imgs: torch.Tensor):
         """
         batch_rgb: (B,3,H,W) in [0,1]
         returns: (B,) tensor of % bright green area
         """
+        from skimage.filters import threshold_otsu
         batch_size = batch_rgb.shape[0]
         gfp_vals = []
         # cell_masks = self.segment_cells_from_phase(phase_imgs)
-        thr = 100 / 255.0  # fixed threshold for GFP, select only very bright areas
+        # thr = 55 / 255.0  # fixed threshold for GFP, select only very bright areas
+        # mean = batch_rgb[:,1].mean()  # mean green channel per patch globally
+        # std = batch_rgb[:,1].std()    # std dev of green channel per patch globally
+        # thr = max(mean - 1 * std, 1.0)
+
         for i in range(batch_size):
             gfp_img = batch_rgb[i].cpu().numpy() # (3,H,W)
             # get only the green channel
             gfp_img = gfp_img[1,:,:]  # (H,W)
+            bg_mean = np.mean(gfp_img)
+            bg_std = np.std(gfp_img)
+            thr = bg_mean + 1.5 * bg_std # dynamic threshold based on background
+
             # compute simple threshold
             bright_mask = gfp_img >= thr
             # # estimate % area of bright green cells
@@ -649,6 +684,7 @@ class ShaneSeqCellTypeDataset(Dataset):
             # cell_pixels = cell_mask.sum()
             # bright_pixels = (bright_mask & cell_mask).sum()
             # percent = bright_pixels / (cell_pixels + 1e-9)
+
             percent = bright_mask.sum() / (gfp_img.size + 1e-9)
             gfp_vals.append(percent)
         return torch.tensor(gfp_vals, device=batch_rgb.device) #shape (B,)
@@ -690,7 +726,7 @@ class ShaneSeqCellTypeDataset(Dataset):
         return torch.tensor(gfp_vals, device=batch_rgb.device) #shape (B,)
 
     def _extract_gfp_value(self, batch_rgb: torch.Tensor, phase_imgs: torch.Tensor, 
-                           sat_thresh=0.3, a_thresh=-6) -> float:
+                           sat_thresh=0.5, a_thresh=-6) -> float:
         """
         batch_rgb: (B,3,H,W) in [0,1]
         returns: (B,) tensor of % bright green area
@@ -702,7 +738,7 @@ class ShaneSeqCellTypeDataset(Dataset):
         L, a, b = lab[:,0], lab[:,1], lab[:,2]
 
         # Hue in green range (approx 70°–170° → 0.2–0.47 in [0,1])
-        green_band = (H > 70/360) & (H < 170/360)
+        green_band = (H > 70/360) & (H < 100/360)
         sat_ok = S > sat_thresh
         a_green = a < a_thresh
 
@@ -721,11 +757,461 @@ class ShaneSeqCellTypeDataset(Dataset):
             percent = bright_pixels / (cell_pixels+1e-9)
             results.append(percent)
         return torch.tensor(results, device=batch_rgb.device) #shape (B,)
+    
+    @staticmethod
+    def morphological_top_hat(gfp_tensor, kernel_size=65):
+        """
+        Applies Morphological Top-Hat transform to a batch of images.
+        
+        Args:
+            gfp_tensor (torch.Tensor): Input tensor of shape (B, C, H, W).
+                                    Values should typically be normalized (0-1).
+            kernel_size (int): Size of the structural element (must be odd). 
+                            Larger kernel = removes larger background blobs.
+                            
+        Returns:
+            torch.Tensor: The Top-Hat transformed tensor (B, C, H, W).
+        """
+        
+        # Ensure kernel_size is odd for symmetric padding
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+            
+        pad = kernel_size // 2
 
-    def mean_gfp_intensity(self, batch_rgb, phase_imgs):
-        g = batch_rgb[:,1]   # assume GFP = channel 1
+        # 1. EROSION (Min Pooling)
+        # PyTorch doesn't have min_pool, so we do: -MaxPool(-x)
+        eroded = -F.max_pool2d(-gfp_tensor, kernel_size=kernel_size, stride=1, padding=pad)
+
+        # 2. DILATION (Max Pooling)
+        # Dilation is simply Max Pooling with stride 1
+        # We apply this to the eroded image to get the "Opening"
+        opening = F.max_pool2d(eroded, kernel_size=kernel_size, stride=1, padding=pad)
+
+        # 3. TOP-HAT
+        # Original - Opening
+        top_hat = gfp_tensor - opening
+        
+        # Clamp to ensure no negative values (optional but recommended for image data)
+        return torch.clamp(top_hat, min=0.0) #shape (B, C, H, W)
+
+    def calculate_gfp_structure_score(self, image_tensor, min_contrast=0.05):
+        """
+        Calculates GFP score based on structural contrast, ignoring bright noise.
+        
+        Args:
+            image_tensor (Tensor): Input images (B, C, H, W). Scaled 0.0-1.0.
+            min_contrast (float): Minimum standard deviation required to consider 
+                                the image as containing "real" objects.
+        """
+        batch_size = image_tensor.shape[0]
+        scores = []
+        
+        # Handle Grayscale vs RGB
+        c_idx = 1 if image_tensor.shape[1] == 3 else 0
+        
+        for i in range(batch_size):
+            img = image_tensor[i, c_idx:c_idx+1, :, :] # Keep (1, H, W) for pooling
+            
+            # --- STEP 1: BLUR (Remove high-freq noise) ---
+            # We average small 5x5 blocks. Real cells survive this; noise disappears.
+            blurred = F.avg_pool2d(img, kernel_size=5, stride=1, padding=2)
+            
+            # --- STEP 2: THE VARIANCE GATE (Check for Structure) ---
+            # Calculate how much the pixel values "spread out"
+            std_dev = torch.std(blurred)
+            
+            # If the image is flat (just grey noise or flat green), std_dev will be tiny.
+            if std_dev < min_contrast:
+                scores.append(0.0)
+                continue
+                
+            # --- STEP 3: RELATIVE THRESHOLDING ---
+            # If we passed the gate, we know there are objects.
+            # We find them by looking at the histogram of the BLURRED image.
+            
+            # Find the range of the image (ignoring single hot pixels)
+            p5 = torch.quantile(blurred, 0.05)
+            p95 = torch.quantile(blurred, 0.95)
+            
+            # Define "Green" as anything significantly brighter than the bottom 5%
+            # We use a dynamic threshold: Bottom + 20% of the range
+            threshold = p5 + 0.2 * (p95 - p5)
+            
+            mask = (blurred > threshold).float()
+            
+            # Calculate Percentage
+            green_pixels = torch.sum(mask)
+            # total_pixels = mask.numel()
+            total_pixels = img.numel()
+            score = (green_pixels / total_pixels) * 100
+            scores.append(score.item())
+
+        return torch.tensor(scores) #shape (B,)
+
+    def _top_hat_gfp(self, batch_rgb: torch.Tensor, phase_imgs: torch.Tensor, 
+                    z_score_cutoff=3.0, min_absolute_threshold=0.05) -> float:
+        """
+        batch_rgb: (B,3,H,W) in [0,1]
+        returns: (B,) tensor of % bright green area
+        """
+        B,_,Hh,Ww = batch_rgb.shape
         cell_mask = self.segment_cells_from_phase(phase_imgs)
-        return (g*cell_mask).sum(dim=[1,2]) / (cell_mask.sum(dim=[1,2])+1e-9) #shape (B,)
+        # green_masks = self.morphological_top_hat(batch_rgb[:,1:2,:,:], kernel_size=25)
+        green_masks = batch_rgb[:,1:2,:,:]
+        results = []
+        for i in range(B):
+            mean_val = torch.mean(green_masks[i,0])
+            std_val = torch.std(green_masks[i,0])
+            adaptive_thresh = mean_val + (z_score_cutoff * std_val)
+            threshold = max(adaptive_thresh, min_absolute_threshold)
+            bright_mask = (green_masks[i,0] >= threshold) & cell_mask[i]
+            # vals = green_masks[i,0][cell_mask[i]]
+            # thr = self.otsu_threshold(vals.flatten())
+            # bright_mask = (green_masks[i,0] >= thr) & cell_mask[i]
+            cell_pixels = cell_mask[i].sum().item()
+            bright_pixels = bright_mask.sum().item()
+            percent = bright_pixels / (cell_pixels+1e-9)
+            results.append(percent)
+        return torch.tensor(results, device=batch_rgb.device), cell_mask #shape ((B,), (B, H,W))
+
+    def _extract_gfp_value_per_patch(self, batch_rgb: torch.Tensor, phase_imgs: torch.Tensor, 
+                           sat_thresh=0.3, a_thresh=-6):
+        """
+        batch_rgb: (B,3,H,W) in [0,1]
+        returns: (B,) tensor of % bright green area
+        """
+        B,_,Hh,Ww = batch_rgb.shape
+        cell_mask = self.segment_cells_from_phase(phase_imgs)
+        results = []
+        for i in range(B):
+            current_patch = batch_rgb[i].unsqueeze(0)  # (1,3,H,W)
+            hsv = self.rgb_to_hsv(current_patch)
+            lab = self.rgb_to_lab(current_patch)
+
+            H, S, V = hsv[:,0], hsv[:,1], hsv[:,2]
+            L, a, b = lab[:,0], lab[:,1], lab[:,2]
+
+            # Hue in green range (approx 70°–170° → 0.2–0.47 in [0,1])
+            green_band = (H > 70/360) & (H < 140/360)
+            sat_ok = S > sat_thresh
+            a_green = a < a_thresh
+
+            green_mask = green_band & sat_ok & a_green
+            vals = V[0][green_mask[0]]
+            thr = self.otsu_threshold(vals.flatten())
+            bright_mask = green_mask[0] & (V[0] >= thr) & cell_mask[i]
+            cell_pixels = cell_mask[i].sum().item()
+            bright_pixels = bright_mask.sum().item()
+            percent = bright_pixels / (cell_pixels+1e-9)
+            results.append(percent)
+        return torch.tensor(results, device=batch_rgb.device) #shape (B,)
+    
+    def _extract_gfp_value_per_patch_cellpose(self, batch_rgb: torch.Tensor, phase_imgs: torch.Tensor):
+        '''
+        Use CellPose to segment cells from phase and GFP images.
+        Then compute a percentage of the number of green cells over total cells.
+        batch_rgb: (B,3,H,W) in [0,1]
+        phase_imgs: (B,3,H,W) in [0,1]
+        returns: (B,) tensor of % green cells
+        '''
+        B,_,Hh,Ww = batch_rgb.shape
+        phase_seg = self.segment_cells_cellpose(phase_imgs)  # (B,H,W) integer labels
+        gfp_seg = self.segment_cells_cellpose(batch_rgb)    # (B,H,W) integer labels
+        results = []
+        for i in range(B):
+            phase_labels = torch.unique(phase_seg[i])
+            gfp_labels = torch.unique(gfp_seg[i])
+            num_phase_cells = phase_labels.shape[0] - (1 if 0 in phase_labels else 0)  # exclude background
+            num_gfp_cells = gfp_labels.shape[0] - (1 if 0 in gfp_labels else 0)        # exclude background
+            if num_phase_cells < 2 or num_gfp_cells < 2:
+                percent = 0.0
+            else:
+                percent = num_gfp_cells / (num_phase_cells + 1e-9)
+            results.append(percent)
+        return torch.tensor(results, device=batch_rgb.device) #shape (B,)
+
+    
+    def calculate_gfp_score_gatekeeper(self, image_tensor, pcm_tensor, 
+                                        noise_floor=0.15, saturation_check=False):
+        """
+        Robust GFP scoring using a Gatekeeper approach.
+        
+        Args:
+            image_tensor (torch.Tensor): Input images (B, C, H, W). 
+                                        Values MUST be 0.0 to 1.0.
+            noise_floor (float): The absolute minimum intensity (0.0-1.0) for a pixel 
+                                to be considered 'real' GFP. 0.15 (15%) is a good start.
+                                
+        Returns:
+            scores (Tensor): Percentage of greenness (0-100)
+        """
+        batch_size = image_tensor.shape[0]
+        # cell_mask = self.segment_cells_from_phase(pcm_tensor)
+        # cell_mask = self.segment_cells_cellpose(pcm_tensor) > 0  # binary mask of cells
+        scores = []
+        
+        # Ensure we are looking at the Green channel (usually channel 1 in RGB)
+        # If input is already grayscale (B, 1, H, W), use channel 0
+        c_idx = 1 if image_tensor.shape[1] == 3 else 0
+        
+        for i in range(batch_size):
+            img = image_tensor[i, c_idx, :, :] # Extract Green Channel
+            
+            # --- STEP 1: THE GATEKEEPER ---
+            # We calculate the 99th percentile brightness (robust max)
+            # This tells us: "How bright is the brightest stuff in this image?"
+            max_val = torch.quantile(img, 0.99)
+            
+            # If the brightest parts of the image are dimmer than our floor,
+            # the whole image is just noise.
+            if max_val < noise_floor:
+                scores.append(0.0)
+                continue
+                
+            # --- STEP 2: SIGNAL COUNTING ---
+            # Since the image passed the gate, we count the pixels.
+            # We use the same noise_floor as the threshold.
+            
+            # mask = (img > noise_floor) & cell_mask[i]  # Only consider pixels above noise floor within cells
+            mask = (img > noise_floor)  # Only consider pixels above noise floor
+            
+            # total_pixels = cell_mask[i].sum()
+            total_pixels = torch.numel(img)
+            green_pixels = torch.sum(mask)
+            
+            # Calculate Percentage
+            score = green_pixels / total_pixels
+            scores.append(score.item())
+
+        return torch.tensor(scores)  #shape (B,)
+
+    def _mean_gfp_intensity(self, batch_rgb, phase_imgs):
+        g = batch_rgb[:,1]   # assume GFP = channel 1
+        # cell_mask = self.segment_cells_from_phase(phase_imgs)
+        # return (g*cell_mask).sum(dim=[1,2]) / (cell_mask.sum(dim=[1,2])+1e-9) #shape (B,)
+        thr = 40 / 255.0
+        g = g * (g >= thr) # threshold to remove background
+        return g.mean(dim=[1,2])  # shape (B,)
+
+    def calculate_gfp_texture_score(self, image_tensor, window_size=9, texture_threshold=0.01):
+        """
+        Calculates GFP score based on TEXTURE (Local Variance), which is robust 
+        to changing background brightness.
+        
+        Args:
+            image_tensor: Input (B, C, H, W). Scaled 0.0-1.0.
+            window_size: Size of the neighborhood to check for texture (approx cell size).
+                        Must be an odd number (e.g., 9, 15).
+            texture_threshold: Sensitivity. 
+                            0.01 picks up faint cells. 
+                            0.05 requires very sharp contrast.
+        """
+        batch_size = image_tensor.shape[0]
+        scores = []
+        
+        # Ensure Green Channel
+        c_idx = 1 if image_tensor.shape[1] == 3 else 0
+        
+        # Padding for the averaging window
+        pad = window_size // 2
+        
+        for i in range(batch_size):
+            img = image_tensor[i, c_idx:c_idx+1, :, :] # Keep (1, H, W)
+            
+            # --- THE MATH: Local Variance ---
+            # Var(X) = E[X^2] - (E[X])^2
+            
+            # 1. Average of the squared image
+            img_sq = img ** 2
+            mean_sq = F.avg_pool2d(img_sq, kernel_size=window_size, stride=1, padding=pad)
+            
+            # 2. Square of the average image
+            sq_mean = F.avg_pool2d(img, kernel_size=window_size, stride=1, padding=pad) ** 2
+            
+            # 3. Variance = Term 1 - Term 2
+            # (Clamp to 0 to avoid tiny negative floating point errors)
+            local_var = torch.clamp(mean_sq - sq_mean, min=0.0)
+            
+            # 4. Convert to Standard Deviation (more intuitive scale)
+            local_std = torch.sqrt(local_var)
+            
+            # --- THE DECISION ---
+            # If a region has high texture (std > threshold), it's a cell.
+            # This ignores "Smooth Bright Green" AND "Smooth Black".
+            mask = (local_std > texture_threshold).float()
+            
+            # Optional: Clean up speckles (Erosion)
+            # mask = F.max_pool2d(-mask, 3, stride=1, padding=1) * -1 
+            
+            # Score
+            green_pixels = torch.sum(mask)
+            # total_pixels = mask.numel()
+            total_pixels = img.numel()
+            score = (green_pixels / total_pixels) * 100
+            scores.append(score.item())
+
+        return torch.tensor(scores)
+
+    def calculate_gfp_bandpass_score(self, image_tensor, min_signal=0.05):
+        """
+        Calculates GFP score using Band-Pass filtering (Difference of Gaussians).
+        This isolates "cell-sized" objects from both NOISE (too small) and 
+        BACKGROUND HAZE (too big).
+        
+        Args:
+            image_tensor: Input (B, C, H, W). Scaled 0.0-1.0.
+            min_signal: Sensitivity. How much brighter than the local background 
+                        must a cell be? (0.05 = 5% brighter).
+        """
+        batch_size = image_tensor.shape[0]
+        scores = []
+        
+        # Ensure Green Channel
+        c_idx = 1 if image_tensor.shape[1] == 3 else 0
+        
+        for i in range(batch_size):
+            img = image_tensor[i, c_idx:c_idx+1, :, :] 
+            
+            # --- STEP 1: Gaussian Blurs ---
+            # Sigma 2: Removes the "grain" (High frequency noise)
+            blur_small = TF.gaussian_blur(img, kernel_size=9, sigma=2.0)
+            
+            # Sigma 20: Estimates the "background haze" (Low frequency trends)
+            # We use a large kernel to average out the illumination
+            blur_large = TF.gaussian_blur(img, kernel_size=61, sigma=20.0)
+            
+            # --- STEP 2: Band-Pass (Subtraction) ---
+            # "Signal" = Structure that exists in small blur but not large blur
+            # This deletes the flat glowing background effectively
+            signal = blur_small - blur_large
+            
+            # --- STEP 3: Thresholding ---
+            # We only count pixels that are locally brighter than their surroundings
+            mask = (signal > min_signal).float()
+            
+            # Score
+            green_pixels = torch.sum(mask)
+            # total_pixels = mask.numel()
+            total_pixels = img.numel()
+            score = (green_pixels / total_pixels) * 100
+            scores.append(score.item())
+
+        return torch.tensor(scores)
+
+    def calculate_gfp_bandpass_score_per_cell(self, image_tensor, phase_tensor, min_signal=0.05, integrated=False, saturation_point=0.15):
+        """
+        Calculates GFP score using Band-Pass filtering (Difference of Gaussians),
+        normalized per cell area.
+        
+        Args:
+            image_tensor: Input (B, C, H, W). Scaled 0.0-1.0.
+            phase_tensor: Input (B, C, H, W). Scaled 0.0-1.0.
+            min_signal: Sensitivity. How much brighter than the local background 
+                        must a cell be? (0.05 = 5% brighter).
+        """
+        batch_size = image_tensor.shape[0]
+        scores = []
+
+        cell_masks = self.segment_cells_cellpose(phase_tensor) > 0  # binary mask of cells
+        
+        # Ensure Green Channel
+        c_idx = 1 if image_tensor.shape[1] == 3 else 0
+        
+        for i in range(batch_size):
+            # # save the phase tensor for debugging
+            # tfm = v2.ToPILImage()
+            # phase_img = tfm(phase_tensor[i].cpu())
+            # phase_img.save(f"/home/zf2dong/scratch/temp/tem_phase_tensor/debug_phase_{i}.png")
+
+            img = image_tensor[i, c_idx:c_idx+1, :, :] 
+            cell_mask = cell_masks[i]
+            
+            # --- STEP 1: Gaussian Blurs ---
+            blur_small = TF.gaussian_blur(img, kernel_size=9, sigma=2.0)
+            blur_large = TF.gaussian_blur(img, kernel_size=61, sigma=20.0)
+            
+            # --- STEP 2: Band-Pass (Subtraction) ---
+            signal = blur_small - blur_large
+            
+            # --- STEP 3: Thresholding ---
+            mask = (signal > min_signal).float() * cell_mask.float()
+                       
+            # Score
+            if integrated: # use integrated density, normalize by saturation point
+                norm_signal = torch.clamp(signal / saturation_point, min=0.0, max=1.0)
+                valid_signal = norm_signal * mask
+                green_value = torch.sum(valid_signal)
+            else:
+                green_value = torch.sum(mask)
+            total_pixels = torch.sum(cell_mask)
+            # catch very small cell areas
+            if total_pixels < 500:
+                score = 0.0
+            else:
+                score = (green_value / (total_pixels) * 100).item()
+            scores.append(score)
+
+        return torch.tensor(scores)  #shape (B,)
+
+    def _quantify_greenness_with_integrated_density(self, gfp_img: torch.Tensor):
+        """
+        Quantifies green fluorescence from an RGB image.
+        
+        Args:
+            gfp_img (torch.Tensor): Shape (B, 3, H, W). 
+                                   Assumes channel 0=R, 1=G, 2=B.
+        
+        Returns:
+            torch.Tensor: Shape (B,). Integrated density of green fluorescence per image.
+        """
+        from skimage.filters import threshold_otsu
+        # 1. Extract Green Channel
+        # Shape is (3, H, W), so Green is at index 1
+        green_channel = gfp_img[:, 1, :, :] # Shape (B, H, W)
+        green_channel = green_channel.cpu().numpy()  # Convert to NumPy for processing
+
+        # 3. Background Subtraction
+        # We estimate background intensity by looking at the dimmest pixels.
+        # A safe bet is the 5th percentile (to ignore dead pixels/absolute black).
+        background_level = np.percentile(green_channel, 5)
+        
+        # Subtract background, clipping negative values to 0
+        green_corrected = np.maximum(green_channel - background_level, 0)
+
+        # get a global ostsu threshold across the batch
+        # thresh_val = threshold_otsu(green_corrected.flatten())
+
+        # # get a threshold using mean + 3*std
+        # mean_intensity = np.mean(green_corrected)
+        # std_intensity = np.std(green_corrected)
+        # thresh_val = mean_intensity + 3 * std_intensity
+
+        green_L = []
+        for i in range(gfp_img.shape[0]):
+            current_green = green_corrected[i]
+            # get a threshold using mean and std
+            mean_intensity = np.mean(current_green)
+            std_intensity = np.std(current_green)
+            thresh_val = mean_intensity + 2 * std_intensity
+
+            binary_mask = current_green > thresh_val
+            green = np.sum(current_green[binary_mask]) # shape: scalar
+         
+            # Mean Intensity: Average brightness of the spots only
+            # green = np.mean(current_green[binary_mask]) if np.sum(binary_mask) > 0 else 0.0
+            
+        #     # Spot Area: How many pixels are glowing?
+        #     spot_area_pixels = np.sum(binary_mask)
+
+            # return {
+            #     "integrated_density": integrated_density, # Best for "Total Amount"
+            #     "mean_intensity": mean_intensity,         # Best for "Concentration"
+            #     "background_level": background_level,
+            #     "mask": binary_mask
+            # }
+            green_L.append(green)
+        return torch.tensor(green_L, device=gfp_img.device)  # shape (B,)
 
     def __len__(self):
         return len(self.imgs)
@@ -740,15 +1226,39 @@ class ShaneSeqCellTypeDataset(Dataset):
             img = img / 255.0
         if gfp_img.max().item() > 1:
             gfp_img = gfp_img / 255.0
+        # only get the central part the image to avoid edge effects
+        _, H, W = img.shape
+        h_start = int(0.1 * H)
+        h_end = int(0.9 * H)
+        w_start = int(0.1 * W)
+        w_end = int(0.9 * W)
+        img = img[:, h_start:h_end, w_start:w_end]
+        gfp_img = gfp_img[:, h_start:h_end, w_start:w_end]
         # make them all 256x256 patches
         img_patches = self.extract_full_patches(img)
         gfp_patches = self.extract_full_patches(gfp_img)
-        # compute the gfp value for each patch
-        # gfp_values = self._extract_gfp_value(gfp_patches, img_patches).view(-1, 1)
-        # gfp_values = self.mean_gfp_intensity(gfp_patches, img_patches).view(-1, 1)
+        # gfp_bright = self.morphological_top_hat(gfp_img.unsqueeze(0))[0]
+        # gfp_patches = self.extract_full_patches(gfp_bright)
+        #* compute the gfp value for each patch
+        # gfp_values = self._extract_gfp_value(gfp_patches, img_patches).view(-1, 1) #* normalize by cell area through a rough segmentation; compute per big image
+        # gfp_values = self._extract_gfp_value_per_patch(gfp_patches, img_patches).view(-1, 1) #* same as above but compute per patch
+        # gfp_values, cell_masks = self._top_hat_gfp(gfp_patches, img_patches) #* top-hat morphological transform to enhance bright spots; normalize by cell area
+        # gfp_values, cell_masks = self.calculate_gfp_score_gatekeeper(gfp_patches, img_patches) #* gatekeeper method for robust GFP scoring
+        # gfp_values = self.calculate_gfp_score_gatekeeper(gfp_patches, img_patches, noise_floor=0.5)  #* gatekeeper method for robust GFP scoring
+        # gfp_values = self._extract_gfp_value_per_patch_cellpose(gfp_patches, img_patches)  #* cellpose segmentation for robust cell masking
+        # gfp_values = self.calculate_gfp_structure_score(gfp_patches, min_contrast=0.1)  #* structure-based GFP scoring
+        # gfp_values = self.calculate_gfp_texture_score(gfp_patches, window_size=9, texture_threshold=0.02)  #* texture-based GFP scoring
+        # gfp_values = self.calculate_gfp_bandpass_score(gfp_patches, min_signal=0.1)  #* band-pass filtering GFP scoring, normaliuzed by total area
+        # gfp_values = self._mean_gfp_intensity(gfp_patches, img_patches).view(-1, 1)
         # gfp_values = self._extract_gfp_value_filter(gfp_patches, img_patches).view(-1, 1)
-        gfp_values = self._extract_gfp_value_threshold(gfp_patches, img_patches).view(-1, 1)
-        return img_patches, (gfp_values, img_name, gfp_patches)
+        # gfp_values = self._extract_gfp_value_threshold(gfp_patches, img_patches).view(-1, 1)
+        if self.load_mitotic:
+            gfp_values = self.calculate_gfp_bandpass_score_per_cell(gfp_patches, img_patches, min_signal=0.01, integrated=True)  #* band-pass filtering GFP scoring, normalized by cell area, integrated density
+            # gfp_values = self.calculate_gfp_bandpass_score_per_cell(gfp_patches, img_patches, min_signal=0.07, integrated=False)  #* band-pass filtering GFP scoring, normalized by cell area, no integrated density
+        else:
+            gfp_values = self.calculate_gfp_bandpass_score_per_cell(gfp_patches, img_patches, min_signal=0.07, integrated=False)  #* band-pass filtering GFP scoring, normalized by cell area
+        gfp_values = gfp_values.view(-1, 1)
+        return img_patches, (gfp_values, img_name, gfp_patches)#, cell_masks)
     
 #* Shane's seuqnecing for confluency
 class ShaneSeqConfluencyDataset(Dataset):

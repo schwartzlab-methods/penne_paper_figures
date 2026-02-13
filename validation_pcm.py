@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--shane_confluency_dataset", action="store_true", help="use the Confluency dataset from Shane instead of the livecell data")
     parser.add_argument('--name', type=str, default="gene_predictor", help='Name of the model for logging')
     parser.add_argument('--cell_type', type=str, default=None, help='Cell type of the image. Supply this if all cells are the same type.')
+    parser.add_argument('--if_scramble', action="store_true", help='Whether to scramble the input images for testing as a baseline.')
     args = parser.parse_args()
     # check if the output directory exists
     if not os.path.exists(args.output_dir):
@@ -90,10 +91,10 @@ def main():
         img = img.to(model.device)
         if len(img.shape) > 4:
             img = img.squeeze(0)
-        pred = model(img, if_convert=not args.no_spaghetti) #shape: (n, num_genes)
+        pred = model(img, if_convert=not args.no_spaghetti, scramble=args.if_scramble) #shape: (n, num_genes)
         pred = pred.mean(dim=0, keepdim=True) #shape: (1, num_genes)
         # features
-        features = model.compute_feature(img, if_convert=not args.no_spaghetti)
+        features = model.compute_feature(img, if_convert=not args.no_spaghetti, scramble=args.if_scramble) #shape: (n, feature_dim)
         features = features.mean(dim=0, keepdim=True) #shape: (1, feature_dim)
         pred_L.append(pred.cpu().numpy())
         features_L.append(features.cpu().numpy())

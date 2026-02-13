@@ -213,8 +213,6 @@ def main():
                         help='If set, the model will be trained with ablation with removed marker genes')
     parser.add_argument('--no_convert_for_pcm', action='store_true', 
                         help='If set, the model will be trained without using the converter for PCM images')
-    parser.add_argument('--feature_extractor', type=str, default="phikon-2", 
-                        help='Feature extractor model to use') #! todo - implement other feature extractors
     parser.add_argument('--bio_feature_size', type=int, default=960, 
                         help='The size of the biological feature after disentanglement')
     parser.add_argument('--domain_feature_size', type=int, default=64, 
