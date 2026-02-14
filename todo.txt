@@ -1,2 +1,7 @@
 Immediate todos:
-- validate cell cycles
+- beautify the figures with Altair
+- GFP co-culture
+    - try with G2 database and rerun GSEA
+    - plot distribution -> binomial cut off -> GSEA
+    - compute cosine similarity bw GT for each, colour by weighted sum (does not work :/)
+    - compute our own DEG gene set using GT rna seq -> GSEA
