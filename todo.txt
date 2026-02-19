@@ -1,7 +1,17 @@
 Immediate todos:
+- add significance
+- make supplemental figures
+    - all marker gene box plots for livecell
+    - all deg and gsea for livecell
+    - livecell vs U373 GSEA?
+    - confluency TMC / UMAP
+
+- GFP co-culture
+    - try with G2 database and rerun GSEA 
+
+Things that have been done:
 - beautify the figures with Altair
 - GFP co-culture
-    - try with G2 database and rerun GSEA
-    - plot distribution -> binomial cut off -> GSEA
+    - plot distribution -> binomial cut off -> GSEA (worked)
     - compute cosine similarity bw GT for each, colour by weighted sum (does not work :/)
-    - compute our own DEG gene set using GT rna seq -> GSEA
+    - compute our own DEG gene set using GT rna seq -> GSEA (worked?)
