@@ -1,10 +1,15 @@
 Immediate todos:
 - add significance
+- mention that we filter out database for gsea to get rid of unrealistic pathways
+- mention that we used q-val < 0.25
 - make supplemental figures
     - all marker gene box plots for livecell
     - all deg and gsea for livecell
     - livecell vs U373 GSEA?
     - confluency TMC / UMAP
+    - apical junction box plot
+    - show example of high and low confluency
+    - show the coculture gene set marker box plot and GSEA
 
 - GFP co-culture
     - try with G2 database and rerun GSEA 
