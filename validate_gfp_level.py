@@ -6,6 +6,8 @@ Code to validate the GFP levels in the dataset. It:
 4. look at the highest contributing genes (PC loading) to the GFP levels
 '''
 from dataset import ShaneSeqCellTypeDataset
+from correlation_validation import parse_gt_files
+from scipy.spatial.distance import cityblock
 import pytorch_lightning as pl
 from model import GeneExpPredVisiumHD
 import torch
@@ -32,7 +34,6 @@ import anndata as ad
 from exp_analysis.gene_set_expression import read_tsv
 from itertools import chain
 import gseapy as gp
-
 import altair as alt
 ## plotting settings
 if True:  # In order to bypass isort when saving
@@ -170,7 +171,7 @@ def prerank_gsea(coef_df, database, output, name=""):
     # plot top 10 terms for both
     top_terms = up_terms.head(10)
     plt.figure(figsize=(16, 6))
-    sns.barplot(x='NES', y='Term', data=top_terms, color='green')
+    sns.barplot(x='NES', y='Term', data=top_terms, color='red')
     plt.title('Top 10 Prerank GSEA Terms')
     plt.tight_layout()
     plt.savefig(os.path.join(output, f"shane_feature_linear_prerank_gsea_{name}_up.png"))
@@ -178,15 +179,15 @@ def prerank_gsea(coef_df, database, output, name=""):
     
     top_terms_down = down_terms.head(10)
     plt.figure(figsize=(16, 6))
-    sns.barplot(x='NES', y='Term', data=top_terms_down, color='red')
+    sns.barplot(x='NES', y='Term', data=top_terms_down, color='blue')
     plt.title('Top 10 Prerank GSEA Terms (Down)')
     plt.tight_layout()
     plt.savefig(os.path.join(output, f"shane_feature_linear_prerank_gsea_{name}_down.png"))
     plt.close()
 
-def linear_regression(X, X_label, y, out):
+def linear_regression(X, X_label, y, out , gt_level=None, gt_level_neg=None):
     '''
-    Perform linear regression on the given data.
+    Perform regression on the given data.
     '''
     X = np.array(X)
     y = np.array(y).reshape(-1, 1)
@@ -206,9 +207,22 @@ def linear_regression(X, X_label, y, out):
     reg_line.fit(y, y_pred)
     y_pred_reg = reg_line.predict(y)
 
+    # if gt_level is propvided, compute the cosine similarity between the inferred gene expression and the gt_level
+    if gt_level is not None and gt_level_neg is not None:
+        similarity = cosine_similarity(X, gt_level) - cosine_similarity(X, gt_level_neg)
+        # get colour palette based on gt_level
+        norm = plt.Normalize(similarity.min(), similarity.max())
+        cmap = plt.cm.viridis
+        colors = cmap(norm(similarity))
+    else:
+        colors = 'blue'
     # plot
-    plt.figure(figsize=(10, 6))
-    plt.scatter(y, y_pred, alpha=0.5)
+    plt.figure(figsize=(15, 6))
+    plt.scatter(y, y_pred, color=colors, alpha=0.7)
+    # add a legend for the colour based on gt_level if provided
+    if gt_level is not None:
+        plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), 
+        label='Cosine Similarity to GT Level', cax=plt.gca().inset_axes([1.05, 0.1, 0.02, 0.8]))
     # plot the regression line genrated
     plt.plot(y, y_pred_reg, color='red', linewidth=2)
     plt.xlabel("Actual")
@@ -247,6 +261,16 @@ def linear_regression(X, X_label, y, out):
 
     return pred_df, coef_df, r2, p_value
 
+def cosine_similarity(exp, gt_level):
+    '''
+    Compute cosine similarity between the inferred gene expression and the ground truth expression
+    Return the similarity score for each sample
+    '''
+    exp_norm = exp / np.linalg.norm(exp, axis=1, keepdims=True)
+    gt_norm = gt_level / np.linalg.norm(gt_level)
+    similarity = np.dot(exp_norm, gt_norm)
+    return similarity
+
 def main():
     parser = argparse.ArgumentParser(description="Validate GFP levels")
     parser.add_argument("--input_file", type=str, required=True, 
@@ -269,6 +293,8 @@ def main():
     parser.add_argument("--scramble", action="store_true", help="Whether to scramble/permute the input images for baseline evaluation")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to the output directory")
     parser.add_argument("--load", action="store_true", help="Whether to load existing predictions")
+    parser.add_argument("--gt", type=str, default=None, help="Path to the ground truth gene expression of MCF10A for correlation analysis")
+    parser.add_argument("--gt_marker", type=str, default=None, help="Path to the ground truth marker gene expression of MCF10A for correlation analysis")
     parser.add_argument("--test_mcf_hct", action="store_true", help="Whether to test MCF10A and HCT116 marker gene enrichment")
     parser.add_argument("--show_example", action="store_true", help="Whether to show example images with high and low GFP levels")
     parser.add_argument("--run_dim_reduction", action="store_true", help="Whether to run dimensionality reduction (PCA, UMAP, TMC)")
@@ -295,6 +321,7 @@ def main():
         gene_names = np.array(gene_names).reshape(-1)
     np.save(os.path.join(args.output_dir, f"gene_names.npy"), gene_names)
     print("Gene symbols saved to ", args.output_dir)
+
     num_genes = gene_names.shape[0]
     try:
         if args.load:
@@ -319,6 +346,9 @@ def main():
         pcm_img_L = []
         with torch.no_grad():
             for img, label in tqdm(loader):
+                if "00d" not in label[1][0]:
+                     print(f"Skipping sample {label[1][0]} as it is too confluent to measure GFP levels reliably")
+                     continue
                 img = img.to(model.device)
                 img = img.squeeze(0) #remove the default batch dimension
                 pred = model(img, if_convert=not args.no_spaghetti, scramble=args.scramble) #shape: num_patches, num_genes
@@ -337,6 +367,54 @@ def main():
         np.save(os.path.join(args.output_dir, f"shane_cell_type_gfp.npy"), gfp_L)
         np.save(os.path.join(args.output_dir, f"shane_cell_type_img_names.npy"), img_name_L)
     
+    # filter out negative GFP levels which are unreliable measurements
+    valid_indices = gfp_L >= 0
+    pred_L_z = pred_L - pred_L.mean(axis=1, keepdims=True) / (pred_L.std(axis=1, keepdims=True) + 1e-8) # z-score normalization
+    pred_L = pred_L[valid_indices]
+    pred_L_z = pred_L_z[valid_indices]
+    gfp_L = gfp_L[valid_indices]
+    
+    # parse gt if provided
+    if args.gt:
+        gt_files = [os.path.join(args.gt, f) 
+                for f in os.listdir(args.gt) if f.endswith('_gene_symbols.txt') and "NIR" in f]
+        gt_df = parse_gt_files(gt_files) # shape: num_samples, num_genes
+        # # z-score normalize
+        # gt_df = gt_df.apply(lambda x: (x - x.mean()) / (x.std() + 1e-8), axis=0)
+        # take the mean across all rows (samples) to get the average expression level for each gene
+        gt_neg_level = gt_df[gt_df.index.str.contains("HCT")].mean(axis=0).values.reshape(-1)
+        gt_level = gt_df[gt_df.index.str.contains("GFP")].mean(axis=0).values.reshape(-1) # shape: num_genes
+        # order according to gene_names
+        gt_level_ordered = []
+        gt_neg_level_ordered = []
+        for gene in gene_names:
+            if gene in gt_df.columns:
+                gt_level_ordered.append(gt_level[gt_df.columns.get_loc(gene)])
+                gt_neg_level_ordered.append(gt_neg_level[gt_df.columns.get_loc(gene)])
+            else:
+                gt_level_ordered.append(0.0) # if gene not found in gt, assign 0
+                gt_neg_level_ordered.append(0.0)
+        # get sample with name GFP and HCT
+        gt_level_ordered = np.array(gt_level_ordered).reshape(-1) # shape: num_genes
+        gt_neg_level_ordered = np.array(gt_neg_level_ordered).reshape(-1) # shape: num_genes
+        if args.gt_marker:
+            gt_marker_df = pd.read_csv(args.gt_marker, sep=',', header=0)
+            # order according to log2FC
+            gt_marker_df.sort_values(by="log2FC", ascending=False, inplace=True)
+            # get top and bottom genes as marker genes
+            # gt_marker_top = gt_marker_df.head(200)["gene_symbol"].values
+            # gt_marker_bottom = gt_marker_df.tail(200)["gene_symbol"].values
+            gt_marker_top = gt_marker_df[gt_marker_df["log2FC"] > 6]["gene_symbol"].values
+            gt_marker_bottom = gt_marker_df[gt_marker_df["log2FC"] < -6]["gene_symbol"].values
+            all_markers = list(set(gt_marker_top).union(set(gt_marker_bottom)))
+            # filter the gene_names to only include marker genes
+            masks = np.isin(gene_names, all_markers)
+            gene_names = gene_names[masks]
+            pred_L = pred_L[:,masks]
+            pred_L_z = pred_L_z[:,masks]
+            gt_level_ordered = gt_level_ordered[masks]
+            gt_neg_level_ordered = gt_neg_level_ordered[masks]
+
     # plot green fluorescence distribution
     plt.figure(figsize=(8,6))
     sns.histplot(gfp_L, bins=50, kde=True)
@@ -348,6 +426,8 @@ def main():
 
     if args.show_example and not args.load:
         # show example images with high and low GFP levels
+        img_L = img_L[valid_indices]
+        pcm_img_L = pcm_img_L[valid_indices]
         sorted_indices = np.argsort(gfp_L)
         low_indices = sorted_indices[:5]
         high_indices = sorted_indices[-5:]
@@ -384,6 +464,19 @@ def main():
         plt.suptitle("Example PCM Images with Low and High GFP Levels")
         plt.savefig(os.path.join(args.output_dir, "shane_cell_type_example_pcm_images.png"))
         plt.close()
+        #! display all gfp of 0
+        zero_gfp_indices = np.where(gfp_L == 0)[0]
+        # save a pair of image and pcm with gfp of 0, each as individual file, in a folder
+        os.makedirs(os.path.join(args.output_dir, "zero_gfp_examples"), exist_ok=True)
+        for i, idx in enumerate(zero_gfp_indices):
+            img = img_L[idx]
+            pcm_img = pcm_img_L[idx]
+            # save image
+            img_np = np.transpose(img, (1, 2, 0))
+            plt.imsave(os.path.join(args.output_dir, "zero_gfp_examples", f"zero_gfp_image_{i}.png"), img_np)
+            # save pcm image
+            pcm_img_np = np.transpose(pcm_img, (1, 2, 0))
+            plt.imsave(os.path.join(args.output_dir, "zero_gfp_examples", f"zero_gfp_pcm_image_{i}.png"), pcm_img_np)
     # load marker gene file
     if args.gmt_file and args.test_mcf_hct: # compute correlation with marker genes
         signature = read_tsv(args.gmt_file)
@@ -404,6 +497,8 @@ def main():
         mask = np.isin(gene_names, genes_to_use)
         pred_L = pred_L[:,mask]
         gene_names = gene_names[mask]
+        gt_level_ordered = gt_level_ordered[mask] if args.gt else None
+        gt_neg_level_ordered = gt_neg_level_ordered[mask] if args.gt else None
 
     if args.test_mcf_hct:
         # get the mcf10a marker expressions
@@ -441,18 +536,110 @@ def main():
     # remove features (genes) that only have 0
     non_zero_genes = np.any(pred_L != 0, axis=0)
     pred_L = pred_L[:,non_zero_genes]
+    pred_L_z = pred_L_z[:,non_zero_genes]
     gene_names = gene_names[non_zero_genes]
-    assert pred_L.shape[1] == gene_names.shape[0]
+    gt_level_ordered = gt_level_ordered[non_zero_genes] if args.gt else None
+    gt_neg_level_ordered = gt_neg_level_ordered[non_zero_genes] if args.gt else None
+    assert pred_L.shape[1] == gene_names.shape[0], "Number of genes after filtering does not match the number of columns in pred_L"
+
     print("Number of genes after filtering zero genes:", gene_names.shape[0])
     if args.test_mcf_hct:
         num_genes_in_mcf10a = sum([1 if g in marker_mcf10a else 0 for g in gene_names])
         num_genes_in_hct116 = sum([1 if g in marker_hct116 else 0 for g in gene_names])
         print(f"Number of genes after filtering in MCF10A: {num_genes_in_mcf10a}")
         print(f"Number of genes after filtering in HCT116: {num_genes_in_hct116}")
+    
+    if args.gt:
+        # treat this as a binary classifination
+        # take top 33% gfp as high, mid 33% as mid, bottom 33% as low
+        # then plot a box plot of cosine similarity between the inferred gene expression and the gt_level for each group
+        print("Computing cosine similarity between inferred gene expression and GT level across GFP levels")
+        print("Total samples: ", len(pred_L))
+        final_high_marker_genes = set(gt_marker_top).intersection(set(gene_names))
+        final_low_marker_genes = set(gt_marker_bottom).intersection(set(gene_names))
+        df_final_marker_genes = pd.DataFrame({
+            "Gene": gene_names,
+            "Is_MCF10A_Marker": [1 if gene in final_high_marker_genes else 0 for gene in gene_names],
+            "Is_HCT116_Marker": [1 if gene in final_low_marker_genes else 0 for gene in gene_names]
+        })
+        df_final_marker_genes.to_csv(os.path.join(args.output_dir, "shane_cell_type_final_marker_genes.csv"), index=False)
+        num_cut = 2
+        print("Cutting GFP levels into ", num_cut, " bins")
+        gfp_bins = pd.cut(gfp_L, bins=num_cut, labels=[f"bin_{i}" for i in range(num_cut)])
+        # gfp_bins = pd.qcut(gfp_L, q=num_cut, labels=[f"bin_{i}" for i in range(num_cut)])
+        high_idx = gfp_bins == f"bin_{num_cut-1}"
+        low_idx = gfp_bins == f"bin_0"
+        # similarity_pos = cosine_similarity(pred_L, gt_level_ordered)
+        # similarity_neg = cosine_similarity(pred_L, gt_neg_level_ordered)
+        # save a DEG with gene names and diff between high and low
+        deg_df = pd.DataFrame({
+            "Gene": gene_names,
+            "exp_in_high": np.mean(pred_L[high_idx, :], axis=0),
+            "exp_in_low": np.mean(pred_L[low_idx, :], axis=0),
+            "log2fc": np.mean(pred_L[high_idx, :], axis=0) - np.mean(pred_L[low_idx, :], axis=0)
+        })
+        deg_df.to_csv(os.path.join(args.output_dir, "shane_cell_type_deg_high33_vs_low33_gfp.csv"), index=False)
+        #* compute a z-score difference between high marker gene and low marker gene
+        pos_gene_marker = np.isin(gene_names, gt_marker_top)
+        neg_gene_marker = np.isin(gene_names, gt_marker_bottom)
+        similarity_pos = np.mean(pred_L_z[:,pos_gene_marker], axis=1)
+        similarity_neg = np.mean(pred_L_z[:,neg_gene_marker], axis=1)
+        sim_df = pd.DataFrame({
+            "gfp_values": gfp_L,
+            "GFP_Level": gfp_bins,
+            "Cosine_Similarity": similarity_pos - similarity_neg
+        })
+        # run a statistical test to see if there is a significant difference between the three groups
+        # use manwhiney u test since the data is not normally distributed
+        from scipy.stats import mannwhitneyu
+        low_high = sim_df[sim_df["GFP_Level"].isin([f"bin_0", f"bin_{num_cut-1}"])]
+        u_stat_low_high, p_value_low_high = mannwhitneyu(low_high[low_high["GFP_Level"]==f"bin_0"]["Cosine_Similarity"], low_high[low_high["GFP_Level"]==f"bin_{num_cut-1}"]["Cosine_Similarity"])
+        print(f"Mann-Whitney U test between Low and High GFP levels: U={u_stat_low_high}, p-value={p_value_low_high:.4e}")
+        print(sim_df.groupby("GFP_Level")["Cosine_Similarity"].describe())
+        plt.figure(figsize=(15,6))
+        sns.boxplot(x="GFP_Level", y="Cosine_Similarity", data=sim_df, palette="muted")
+        plt.xlabel("GFP Level")
+        plt.ylabel("Log2FC\nMCF10A and HCT116 Marker Gene Expression")
+        plt.title("Log2FC between MCF10A and HCT116 Marker Gene Expression across GFP Levels")
+        plt.savefig(os.path.join(args.output_dir, "shane_cell_type_log2fc_boxplot.png"))
+        plt.close()
+        # plot a scatter plot between GFP levels and cosine similarity
+        plt.figure(figsize=(15,6))
+        sns.scatterplot(x=gfp_L, y=similarity_pos - similarity_neg)
+        # fit a regression line
+        sns.regplot(x=gfp_L, y=similarity_pos - similarity_neg, scatter=False, color='red')
+        # show the correlation coefficient in the plot
+        corr_coef, p_value_corr = pearsonr(gfp_L, similarity_pos - similarity_neg)
+        plt.text(0.05, 0.95, f"Pearson r = {corr_coef:.4f}\n(p-value = {p_value_corr:.4e})", transform=plt.gca().transAxes, 
+                 fontsize=12, verticalalignment='top')
+        plt.title("Log2FC between MCF10A and HCT116 Marker Gene Expression across GFP Levels")
+        plt.xlabel("GFP Level")
+        plt.ylabel("Log2FC (MCF10A - HCT116)")
+        plt.savefig(os.path.join(args.output_dir, "shane_cell_type_log2fc_scatter.png"))
+        plt.close()
+        #! make GFP into more bins and plot mean for each bin
+        num_bins = 10
+        sim_df["bin"]=pd.cut(sim_df["gfp_values"], bins=num_bins, labels=[f"Bin_{i}" for i in range(num_bins)])
+        pseudo_bulk = sim_df.groupby('bin')[['gfp_values', 'Cosine_Similarity']].mean().dropna()
+        r, p = pearsonr(pseudo_bulk['gfp_values'], pseudo_bulk['Cosine_Similarity'])
+        plt.figure(figsize=(15,6))
+        plt.errorbar(pseudo_bulk['gfp_values'], pseudo_bulk['Cosine_Similarity'], 
+                 yerr=sim_df.groupby('bin')['Cosine_Similarity'].sem(), 
+                 fmt='o', color='black', capsize=5, label='Bin Mean +- SEM')
+    
+        sns.regplot(x='gfp_values', y='Cosine_Similarity', data=pseudo_bulk, scatter=False, color='red')
+        
+        plt.title(f"Pseudo-Bulk Validation (n={num_bins} bins)\nPearson r: {r:.4f}\n(p-value: {p:.4e})")
+        plt.xlabel("Mean GFP Level (MCF10A Abundance)")
+        plt.ylabel("Log2FC\nMCF10A and HCT116 Marker Gene Expression")
+        plt.legend()
+        plt.savefig(os.path.join(args.output_dir, "shane_cell_type_log2fc_binned_scatter.png"))
+        plt.close()
 
     # ridge regression
     print("Running Ridge Regression")
-    pred_df, coef_df, r2, p_value = linear_regression(pred_L, None if args.only_markers else gene_names, gfp_L, args.output_dir)
+    pred_df, coef_df, r2, p_value = linear_regression(pred_L, None if args.only_markers else gene_names, gfp_L, args.output_dir, 
+                                                    gt_level_ordered if args.gt else None, gt_neg_level_ordered if args.gt else None)
     pred_df.to_csv(os.path.join(args.output_dir, "shane_cell_type_ridge_regression_predictions.csv"), index=False)
     coef_df.to_csv(os.path.join(args.output_dir, "shane_cell_type_ridge_regression_coefficients.csv"), index=False)
     # see how many top features are MCF10A genes and how many bottom features are HCT116 genes
