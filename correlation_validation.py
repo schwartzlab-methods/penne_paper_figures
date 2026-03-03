@@ -30,7 +30,7 @@ def parse_gt_files(files:list[str]) -> pd.DataFrame:
     for f in files:
         exp_name = str(os.path.basename(f)).replace('_gene_counts_gene_symbols.txt', '')
         df = pd.read_csv(f, sep='\t', header=0, names=[exp_name,"gene_symbol"])
-        # make it such that gene symbols are row
+        # make it such that one row is one sample, and one column is one gene, and the value is the expression level
         df = df.set_index("gene_symbol").T
         # normalize to 1e6 then log2 + 1
         df = np.log2((df / df.sum(axis=1).values[0]) * 1e6 + 1)
@@ -158,23 +158,23 @@ def main():
     print("Number of common genes: ", common_genes.shape[0])
 
     # get common genes only
-    gt_data_df_stats = gt_data_df.loc[:, common_genes]
-    pred_stats = pred[:, np.isin(gene_symbols_list, common_genes)]
+    gt_data_df = gt_data_df.loc[:, common_genes]
+    pred = pred[:, np.isin(gene_symbols_list, common_genes)]
 
     # reorder such that the columns are in the same order
     common_genes_ordered = [gene for gene in gene_symbols_list if gene in common_genes]
-    gt_data_df_stats = gt_data_df_stats.reindex(columns=common_genes_ordered)
-    print(gt_data_df_stats.head(10))
+    gt_data_df = gt_data_df.reindex(columns=common_genes_ordered)
+    print(gt_data_df.head(10))
 
     # dimension reduction on shane's data
     print("Performing PCA on ground truth data...")
     pca = PCA()
-    gt_data_reduced = pca.fit_transform(gt_data_df_stats.fillna(0).to_numpy())
+    gt_data_reduced = pca.fit_transform(gt_data_df.fillna(0).to_numpy())
     # plot, where label is the sample (row name)
     # get colors for each unique label
-    unique_labels = np.unique(gt_data_df_stats.index)
+    unique_labels = np.unique(gt_data_df.index)
     label_to_color = {label: color for label, color in zip(unique_labels, sns.color_palette("hsv", len(unique_labels)))}
-    colors = [label_to_color[label] for label in gt_data_df_stats.index]
+    colors = [label_to_color[label] for label in gt_data_df.index]
 
     plt.figure(figsize=(8, 8))
     plt.scatter(gt_data_reduced[:, 0], gt_data_reduced[:, 1], c=colors, s=50)
@@ -187,22 +187,22 @@ def main():
     plt.close()
 
     print("Generating per-gene stats about prediction and ground truth...")
-    compute_stats_gt(gt_data_df_stats, pred_stats, args.output)
+    compute_stats_gt(gt_data_df, pred, args.output)
     metrics = []
-    for j in range(gt_data_df_stats.shape[1]):
-        mae = np.mean(np.abs(gt_data_df_stats.iloc[:, j] - pred_stats[:, j]))
-        rmse = np.sqrt(np.mean((gt_data_df_stats.iloc[:, j] - pred_stats[:, j])**2))
-        if np.sum(gt_data_df_stats.iloc[:, j]) > 1e-8 and np.sum(pred_stats[:, j]) > 1e-8: #more than only zero
-            spearman = spearmanr(gt_data_df_stats.iloc[:, j], pred_stats[:, j]).correlation
-            var_ratio = np.var(pred_stats[:, j]) / (np.var(gt_data_df_stats.iloc[:, j]) + 1e-8)
-            nrmse = rmse / (np.std(gt_data_df_stats.iloc[:, j]) + 1e-8)
-            ev = 1 - np.var(gt_data_df_stats.iloc[:, j] - pred_stats[:, j]) / (np.var(gt_data_df_stats.iloc[:, j]) + 1e-8)
-        elif np.sum(pred_stats[:, j]) > 1e-8 and np.sum(gt_data_df_stats.iloc[:, j]) < 1e-8: # all zero in gt but not in pred
+    for j in range(gt_data_df.shape[1]):
+        mae = np.mean(np.abs(gt_data_df.iloc[:, j] - pred[:, j]))
+        rmse = np.sqrt(np.mean((gt_data_df.iloc[:, j] - pred[:, j])**2))
+        if np.sum(gt_data_df.iloc[:, j]) > 1e-8 and np.sum(pred[:, j]) > 1e-8: #more than only zero
+            spearman = spearmanr(gt_data_df.iloc[:, j], pred[:, j]).correlation
+            var_ratio = np.var(pred[:, j]) / (np.var(gt_data_df.iloc[:, j]) + 1e-8)
+            nrmse = rmse / (np.std(gt_data_df.iloc[:, j]) + 1e-8)
+            ev = 1 - np.var(gt_data_df.iloc[:, j] - pred[:, j]) / (np.var(gt_data_df.iloc[:, j]) + 1e-8)
+        elif np.sum(pred[:, j]) > 1e-8 and np.sum(gt_data_df.iloc[:, j]) < 1e-8: # all zero in gt but not in pred
             spearman = 0.0
             var_ratio = np.nan
             ev = 0.0
             nrmse = np.nan
-        elif np.sum(pred_stats[:, j]) < 1e-8 and np.sum(gt_data_df_stats.iloc[:, j]) > 1e-8: # all zero in pred but not in gt
+        elif np.sum(pred[:, j]) < 1e-8 and np.sum(gt_data_df.iloc[:, j]) > 1e-8: # all zero in pred but not in gt
             spearman = 0.0
             var_ratio = 0.0
             ev = 0.0
@@ -227,7 +227,36 @@ def main():
     with open(os.path.join(args.output, "gene_correlation_metrics_filtered_ev0.5_spearman0.3.txt"), "w") as f:
         f.write("\n".join(filtered_genes))
 
-    # plot explained variance vs spearman
+    # run EnrichR to see if the filtered genes are enriched in any cellular processes, and save the results
+    from gseapy import enrichr
+    enr_res = enrichr(
+        gene_list=filtered_genes,
+        gene_sets="GO_Biological_Process_2025",
+        outdir=args.output,
+        cutoff=0.25,  # Only consider terms with adj p-value < 0.25
+        verbose=True
+    )
+
+    # Sort by combined score and select top 10 UP enriched
+    top_terms_sorted = enr_res.results.sort_values("Combined Score", ascending=False)
+    top_terms_sorted = top_terms_sorted[top_terms_sorted["Adjusted P-value"] < 0.25]
+    top_terms_sorted = top_terms_sorted[top_terms_sorted["Combined Score"] > 0]
+
+    # plot with Altair
+    altair_df = pd.DataFrame({
+        "Term": top_terms_sorted["Term"],
+        "Combined Score": top_terms_sorted["Combined Score"],
+    })
+    chart = alt.Chart(altair_df).mark_bar().encode(
+        x=alt.X('Combined Score:Q', title='Combined Score'),
+        y=alt.Y('Term:N', sort='-x', title='Gene Set'),
+        color=alt.value('indianred')  # Color for bars
+    ).properties(
+        title="Top Positively Enriched Gene Sets from GO Biological Process (Enrichr)",
+    ).interactive()
+    chart.save(os.path.join(args.output, 'enrichr_GOprocess_filter_results_top_altair.html'))
+
+    #* plot explained variance vs spearman
     df_metrics = df_metrics.dropna(subset=["Explained Variance", "Spearman"])
     # drop very negative explained variance
     df_metrics = df_metrics[df_metrics["Explained Variance"] >= -1]
@@ -240,10 +269,24 @@ def main():
     plt.axhline(y=0.3, color='r', linestyle='--')
     plt.savefig(os.path.join(args.output, "gene_correlation_ev_vs_spearman.png"))
     plt.close()
+    # plot with altair
+    chart = alt.Chart(df_metrics).mark_circle(opacity=0.5).encode(
+        x=alt.X("Explained Variance:Q", title="Explained Variance"),
+        y=alt.Y("Spearman:Q", title="Spearman Correlation"),
+        tooltip=["Gene:N", "Explained Variance:Q", "Spearman:Q"]
+    ).interactive()
+    v_line = alt.Chart(df_metrics).mark_rule(color='red', strokeDash=[5,5]).encode(
+       x=alt.datum(0.5)
+    )
+    h_line = alt.Chart(df_metrics).mark_rule(color='red', strokeDash=[5,5]).encode(
+        y=alt.datum(0.3)
+    )   
+    chart = chart + v_line + h_line
+    chart.save(os.path.join(args.output, "gene_correlation_ev_vs_spearman.html"))
 
     # plot explained variance vs variance of GT
     genes = df_metrics["Gene"].values
-    pred_mean_per_gene = pred_stats[:, np.isin(common_genes_ordered, genes)].mean(axis=0) # shape (num_genes,)
+    pred_mean_per_gene = pred[:, np.isin(common_genes_ordered, genes)].mean(axis=0) # shape (num_genes,)
     var_explained_all = df_metrics["Explained Variance"].values
     plt.figure(figsize=(8, 8))
     plt.scatter(pred_mean_per_gene, var_explained_all, alpha=0.5)
@@ -260,21 +303,20 @@ def main():
     corr_val_genes = []
     non_zero_pred_genes = []
     non_zero_corr = []
-    for gene in gene_symbols_list:
-        if (gene in gt_data_df.columns) and (gene in common_genes):
-            # Compute correlation
-            pred_values = pred[:, gene_symbols_list == gene].flatten()
-            exp_values = gt_data_df[gene].values.flatten()
-            if np.sum(pred_values) < 1e-8 and np.sum(exp_values) < 1e-8: # both are all zero
-                correlation = 1.0
-            elif np.sum(exp_values) < 1e-8 or np.sum(pred_values) < 1e-8: # one array is constant but the other is not
-                correlation = 0.0
-            else: # at least one is non-zero
-                correlation = spearmanr(exp_values, pred_values).correlation
-                non_zero_pred_genes.append(gene)
-                non_zero_corr.append(correlation)
-            corr_genes.append(str(gene))
-            corr_val_genes.append(correlation)
+    for i, gene in enumerate(common_genes_ordered):
+        # Compute correlation
+        pred_values = pred[:, i].flatten()
+        exp_values = gt_data_df[gene].values.flatten()
+        if np.sum(pred_values) < 1e-8 and np.sum(exp_values) < 1e-8: # both are all zero
+            correlation = 1.0
+        elif np.sum(exp_values) < 1e-8 or np.sum(pred_values) < 1e-8: # one array is constant but the other is not
+            correlation = 0.0
+        else: # at least one is non-zero
+            correlation = spearmanr(exp_values, pred_values).correlation
+            non_zero_pred_genes.append(gene)
+            non_zero_corr.append(correlation)
+        corr_genes.append(str(gene))
+        corr_val_genes.append(correlation)
     df_non_zero_pred = pd.DataFrame({"Gene": non_zero_pred_genes, "Correlation": non_zero_corr})
     df_non_zero_pred.to_csv(os.path.join(args.output, "all_gene_correlation_non_zero.csv"), index=False)
     print("Mean of non-zero correlations:", df_non_zero_pred["Correlation"].mean())
@@ -292,7 +334,7 @@ def main():
     print("Std sample correlation all genes:", np.std(corr_val_samples))
     corr_val_samples_non_zero = []
     for i, sample in enumerate(gt_data_df.index):
-        pred_values = pred[i, np.isin(gene_symbols_list, non_zero_pred_genes)].flatten()
+        pred_values = pred[i, np.isin(common_genes_ordered, non_zero_pred_genes)].flatten()
         exp_values = gt_data_df.loc[sample, non_zero_pred_genes].values.flatten()
         correlation = spearmanr(exp_values, pred_values).correlation
         corr_val_samples_non_zero.append(correlation)
@@ -307,13 +349,11 @@ def main():
     plt.savefig(os.path.join(args.output, "correlation_violin_plot_all_genes.png"))
     plt.close()
     # plot with altair box plot for gene correlations, sample correlations, sample non-zero gene correlations
-    df_corr = pd.DataFrame({
-        "Gene Correlations": corr_val_genes,
-        "Sample All Gene Correlations": corr_val_samples,
-        "Sample All Non-Zero Gene Correlations": corr_val_samples_non_zero
+    df_melt = pd.DataFrame({
+        "Type": ["All Gene Correlations"] * len(corr_val_genes) + ["Sample All Gene Correlations"] * len(corr_val_samples) + ["Sample All Non-Zero Gene Correlations"] * len(corr_val_samples_non_zero),
+        "Correlation": corr_val_genes + corr_val_samples + corr_val_samples_non_zero
     })
-    df_melted = df_corr.melt(var_name="Type", value_name="Correlation")
-    chart = alt.Chart(df_melted).mark_boxplot().encode(
+    chart = alt.Chart(df_melt).mark_boxplot().encode(
         x="Type:N",
         y="Correlation:Q"
     ).interactive()
@@ -327,10 +367,10 @@ def main():
     corr_val_genes = []
     non_zero_pred_genes = []
     non_zero_corr = []
-    for gene in gene_symbols_list:
-        if (gene in gt_data_df.columns) and (gene in filtered_genes):
+    for i, gene in enumerate(common_genes_ordered):
+        if gene in filtered_genes:
             # Compute correlation
-            pred_values = pred[:, gene_symbols_list == gene].flatten()
+            pred_values = pred[:, i].flatten()
             exp_values = gt_data_df[gene].values.flatten()
             if np.sum(pred_values) < 1e-8 and np.sum(exp_values) < 1e-8: # both are all zero
                 correlation = 1.0
@@ -350,7 +390,7 @@ def main():
     samples = []
     corr_val_samples = []
     # filter such that both pred and exp only contains corr_genes
-    pred_filtered = pred[:, np.isin(gene_symbols_list, corr_genes)]
+    pred_filtered = pred[:, np.isin(common_genes_ordered, corr_genes)]
     gt_data_df_filtered = gt_data_df.loc[:, corr_genes].reindex(columns=corr_genes)
     for i, sample in enumerate(gt_data_df_filtered.index):
         pred_values = pred_filtered[i, :].flatten()
@@ -360,7 +400,7 @@ def main():
         samples.append(sample)
 
     corr_val_samples_non_zero = []
-    pred_filtered_non_zero = pred[:, np.isin(gene_symbols_list, non_zero_pred_genes)]
+    pred_filtered_non_zero = pred[:, np.isin(common_genes_ordered, non_zero_pred_genes)]
     gt_data_df_filtered_non_zero = gt_data_df.loc[:, non_zero_pred_genes].reindex(columns=non_zero_pred_genes)
     for i, sample in enumerate(gt_data_df_filtered_non_zero.index):
         pred_values = pred_filtered_non_zero[i, :].flatten()
@@ -368,37 +408,10 @@ def main():
         correlation = spearmanr(exp_values, pred_values).correlation
         corr_val_samples_non_zero.append(correlation)
     
-    print("Mean sample correlation all genes:", np.mean(corr_val_samples))
-    print("Std sample correlation all genes:", np.std(corr_val_samples))
-    print("Mean sample correlation non-zero genes:", np.mean(corr_val_samples_non_zero))
-    print("Std sample correlation non-zero genes:", np.std(corr_val_samples_non_zero))
-
-    print("Calculating statistics on SAMPLE correlation using HIGH correlation genes...")
-    samples = []
-    corr_val_samples = []
-    # filter such that both pred and exp only contains corr_genes
-    pred_filtered = pred[:, np.isin(gene_symbols_list, corr_genes)]
-    gt_data_df_filtered = gt_data_df.loc[:, corr_genes].reindex(columns=corr_genes)
-    for i, sample in enumerate(gt_data_df_filtered.index):
-        pred_values = pred_filtered[i, :].flatten()
-        exp_values = gt_data_df_filtered.iloc[i, :].values.flatten()
-        correlation = spearmanr(exp_values, pred_values).correlation
-        corr_val_samples.append(correlation)
-        samples.append(sample)
-
-    corr_val_samples_non_zero = []
-    pred_filtered_non_zero = pred[:, np.isin(gene_symbols_list, non_zero_pred_genes)]
-    gt_data_df_filtered_non_zero = gt_data_df.loc[:, non_zero_pred_genes].reindex(columns=non_zero_pred_genes)
-    for i, sample in enumerate(gt_data_df_filtered_non_zero.index):
-        pred_values = pred_filtered_non_zero[i, :].flatten()
-        exp_values = gt_data_df_filtered_non_zero.iloc[i, :].values.flatten()
-        correlation = spearmanr(exp_values, pred_values).correlation
-        corr_val_samples_non_zero.append(correlation)
-    
-    print("Mean sample correlation filtered genes:", np.mean(corr_val_samples))
-    print("Std sample correlation filtered genes:", np.std(corr_val_samples))
-    print("Mean sample correlation non-zero genes:", np.mean(corr_val_samples_non_zero))
-    print("Std sample correlation non-zero genes:", np.std(corr_val_samples_non_zero))
+    print("Mean sample correlation high confident genes:", np.mean(corr_val_samples))
+    print("Std sample correlation high confident genes:", np.std(corr_val_samples))
+    print("Mean sample correlation high confident non-zero genes:", np.mean(corr_val_samples_non_zero))
+    print("Std sample correlation high confident non-zero genes:", np.std(corr_val_samples_non_zero))
 
     # plot correlation violin plots for both
     plt.figure(figsize=(12, 6))
@@ -409,21 +422,36 @@ def main():
     plt.savefig(os.path.join(args.output, "correlation_violin_plot_filtered_genes.png"))
     plt.close()
     # plot with altair box plot for gene correlations, sample correlations, sample non-zero gene correlations
-    df_corr = pd.DataFrame({
-        "Gene Correlations": corr_val_genes,
-        "Sample Filtered Gene Correlations": corr_val_samples,
-        "Sample Filtered Non-Zero Gene Correlations": corr_val_samples_non_zero
+    df_melted = pd.DataFrame({
+        "Type": ["Filtered Gene Correlations"] * len(corr_val_genes) + ["Sample Filtered Gene Correlations"] * len(corr_val_samples) + ["Sample Filtered Non-Zero Gene Correlations"] * len(corr_val_samples_non_zero),
+        "Correlation": corr_val_genes + corr_val_samples + corr_val_samples_non_zero
     })
-    df_melted = df_corr.melt(var_name="Type", value_name="Correlation")
     chart = alt.Chart(df_melted).mark_boxplot().encode(
         x="Type:N",
         y="Correlation:Q"
     ).interactive()
     chart.save(os.path.join(args.output, "correlation_boxplot_filtered_genes.html"))
 
-    # # Save correlation results
-    # df_gene_cor = pd.DataFrame({"Gene": corr_genes, "Correlation": corr_val_genes})
-    # df_gene_cor.to_csv(os.path.join(args.output, "filtered_gene_correlation_results.csv"), index=False)
+    # Save correlation results
+    df_gene_cor = pd.DataFrame({"Gene": corr_genes, "Correlation": corr_val_genes})
+    df_gene_cor.to_csv(os.path.join(args.output, "filtered_gene_correlation_results.csv"), index=False)
+
+    # write gene correlation > 0.3 to a txt
+    with open(os.path.join(args.output, "gene_correlation_greater_0.3.txt"), "w") as f:
+        for gene, corr in zip(corr_genes, corr_val_genes):
+            if corr > 0.3:
+                f.write(f"{gene}\n")
+    
+    # write the top 200 genes to a txt
+    df_gene_cor = df_gene_cor.sort_values(by="Correlation", ascending=False).head(200)
+    with open(os.path.join(args.output, "gene_correlation_top_200.txt"), "w") as f:
+        for gene in df_gene_cor["Gene"]:
+            f.write(f"{gene}\n")
+
+    df_sample_cor = pd.DataFrame({"Sample": samples, 
+                                 "Correlation all genes": corr_val_samples,
+                                 "Correlation non-zero genes": corr_val_samples_non_zero})
+    df_sample_cor.to_csv(os.path.join(args.output, "sample_correlation_results.csv"), index=False)
 
     # print("Calculating statistics on gene correlation with ALL genes...")
 
@@ -483,23 +511,6 @@ def main():
     # print("Std sample correlation all genes:", np.std(corr_val_samples))
     # print("Mean sample correlation non-zero genes:", np.mean(corr_val_samples_non_zero))
     # print("Std sample correlation non-zero genes:", np.std(corr_val_samples_non_zero))
-
-    # write gene correlation > 0.3 to a txt
-    with open(os.path.join(args.output, "gene_correlation_greater_0.3.txt"), "w") as f:
-        for gene, corr in zip(corr_genes, corr_val_genes):
-            if corr > 0.3:
-                f.write(f"{gene}\n")
-    
-    # write the top 200 genes to a txt
-    df_gene_cor = df_gene_cor.sort_values(by="Correlation", ascending=False).head(200)
-    with open(os.path.join(args.output, "gene_correlation_top_200.txt"), "w") as f:
-        for gene in df_gene_cor["Gene"]:
-            f.write(f"{gene}\n")
-
-    df_sample_cor = pd.DataFrame({"Sample": samples, 
-                                 "Correlation all genes": corr_val_samples,
-                                 "Correlation non-zero genes": corr_val_samples_non_zero})
-    df_sample_cor.to_csv(os.path.join(args.output, "sample_correlation_results.csv"), index=False)
 
 if __name__ == "__main__":
     main()
