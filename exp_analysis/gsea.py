@@ -48,8 +48,8 @@ def pre_rank(args):
     )
 
     # Sort by NES and select top 10 UP enriched
-    terms_sorted = pre_res.results.sort_values("NES", ascending=False)
-    terms_sorted = terms_sorted[terms_sorted["NOM p-val"] < 0.05]
+    terms_sorted = pre_res.res2d.sort_values("NES", ascending=False)
+    terms_sorted = terms_sorted[terms_sorted["FDR q-val"] < 0.25]
     # get only the entries after __
     terms_sorted["Term"] = terms_sorted["Term"].str.split("__").str[-1]
 
@@ -92,13 +92,15 @@ def pre_rank(args):
     plt.savefig(os.path.join(args.output, 'gsea_results_btm.png'))
     plt.close()
 
-    # plot one altair showing the top positive and negative 10 enrichment from pre-rank
+    # plot one altair showing the top positive and negative enrichment from pre-rank
     # make red more red for positive and blue more blue for negative based on the p-val
     altair_df = pd.DataFrame({
         "Term": pd.concat([top_terms_sorted["Term"], btm_terms_sorted["Term"]]),
         "NES": pd.concat([top_terms_sorted["NES"], btm_terms_sorted["NES"]]),
-        "NOM p-val": pd.concat([top_terms_sorted["NOM p-val"], btm_terms_sorted["NOM p-val"]])
+        "FDR q-val": pd.concat([top_terms_sorted["FDR q-val"], btm_terms_sorted["FDR q-val"]])
     })
+    # filter such that we only have FDR q-val < 0.25
+    altair_df = altair_df[altair_df["FDR q-val"] < 0.25]
     # plot with a scale
     chart = alt.Chart(altair_df).mark_bar().encode(
         x=alt.X('NES:Q', title='Normalized Enrichment Score (NES)'),
@@ -114,8 +116,8 @@ def pre_rank(args):
     chart.save(os.path.join(args.output, 'gsea_results_top_btm_altair.html'))
 
     if args.comparisons:
-        histogram_df = pd.DataFrame({"positive_NES": pre_res.results[pre_res.results["NES"] > 0]["Term"],
-                                     "negative_NES": pre_res.results[pre_res.results["NES"] < 0]["Term"]})
+        histogram_df = pd.DataFrame({"positive_NES": pre_res.res2d[pre_res.res2d["NES"] > 0]["Term"],
+                                     "negative_NES": pre_res.res2d[pre_res.res2d["NES"] < 0]["Term"]})
         # compute the positive enrichment and negative enrichment for each comparison
         final_results_dict = {}
         for comp in args.comparisons:
@@ -180,13 +182,13 @@ def enrichr(args):
         gene_list=genes,
         gene_sets=args.gene_sets,
         outdir=args.output,
-        cutoff=0.05,  # Only consider terms with p-value < 0.05
+        cutoff=0.25,  # Only consider terms with adj p-value < 0.25
         verbose=True
     )
 
     # Sort by combined score and select top 10 UP enriched
     top_terms_sorted = enr_res.results.sort_values("Combined Score", ascending=False)
-    top_terms_sorted = top_terms_sorted[top_terms_sorted["Adjusted P-value"] < 0.05]
+    top_terms_sorted = top_terms_sorted[top_terms_sorted["Adjusted P-value"] < 0.25]
     top_terms_sorted = top_terms_sorted[top_terms_sorted["Combined Score"] > 0]
     plt.figure(figsize=(10, 6))
     sns.barplot(
