@@ -11,14 +11,11 @@ Immediate todos:
         - livecell vs U373 GSEA?
         - confluency TMC / UMAP
         - apical junction box plot
-        - show example of high and low confluency
         - show the coculture gene set marker box plot and GSEA
+        - show gating figures and GSEA cellular location for gating (scrambled and non-scrambed)
+        - show training stats
+        - show full list of genes that are high confident
         - show a few gene expression vs geminin in the supplemental
-- Geminin validation:
-    - avg correlation as a sing curve + time between peak
-    - Gemminin / geminin cross correlation just as a control (and use to look for peak)
-- GFP co-culture
-    - try with G2 database and rerun GSEA 
 
 Things that have been done:
 - beautify the figures with Altair
@@ -26,5 +23,11 @@ Things that have been done:
     - plot distribution -> binomial cut off -> GSEA (worked)
     - compute cosine similarity bw GT for each, colour by weighted sum (does not work :/)
     - compute our own DEG gene set using GT rna seq -> GSEA (worked?)
+    - Geminin validation:
+    - avg correlation as a sing curve + time between peak
+    - Gemminin / geminin cross correlation just as a control (and use to look for peak)
+- GFP co-culture
+    - try with G2 database and rerun GSEA 
 paper:
     - label the DEG for key genes (figure 3)
+    - show example of high and low confluency
