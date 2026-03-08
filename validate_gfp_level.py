@@ -219,7 +219,7 @@ def linear_regression(X, X_label, y, out , gt_level=None, gt_level_neg=None):
     plt.figure(figsize=(15, 6))
     plt.scatter(y, y_pred, color=colors, alpha=0.7)
     # add a legend for the colour based on gt_level if provided
-    if gt_level is not None:
+    if gt_level is not None and gt_level_neg is not None:
         plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), 
         label='Cosine Similarity to GT Level', cax=plt.gca().inset_axes([1.05, 0.1, 0.02, 0.8]))
     # plot the regression line genrated
