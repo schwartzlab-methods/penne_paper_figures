@@ -384,13 +384,16 @@ def main():
     gene_names = gene_names[gene_set_indices]
     print(f"Using {len(gene_names)} genes from the gene set for analysis.")
     
-    # filter based on the high confidence genes only
-    genes_to_use = np.loadtxt(args.genes_to_use, dtype=str)
-    mask = np.isin(gene_names, genes_to_use)
-    print(f"Using {np.sum(mask)} genes from the provided gene list for analysis.")
-    pred_L = pred_L[:, mask]
-    gene_names = gene_names[mask]
-    pred_L_unconcat = [each[:, mask] for each in pred_L_unconcat]
+    # filter based on the high confidence genes only, if a gene list is provided
+    if args.genes_to_use:
+        genes_to_use = np.loadtxt(args.genes_to_use, dtype=str)
+        mask = np.isin(gene_names, genes_to_use)
+        print(f"Using {np.sum(mask)} genes from the provided gene list for analysis.")
+        pred_L = pred_L[:, mask]
+        gene_names = gene_names[mask]
+        pred_L_unconcat = [each[:, mask] for each in pred_L_unconcat]
+    else:
+        print("No gene list provided via --genes_to_use; using all genes that passed previous filters for analysis.")
 
     if not args.gene_set: # if no specific gene set is provided, do correlation analysis for all genes and plot the distribution of correlation values
         # compute the correlation of each gene with the mitosis levels
