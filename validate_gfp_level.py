@@ -7,7 +7,6 @@ Code to validate the GFP levels in the dataset. It:
 '''
 from dataset import ShaneSeqCellTypeDataset
 from correlation_validation import parse_gt_files
-from scipy.spatial.distance import cityblock
 import pytorch_lightning as pl
 from model import GeneExpPredVisiumHD
 import torch
