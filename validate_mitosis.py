@@ -29,7 +29,7 @@ from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.metrics import r2_score
 from scipy.stats import pearsonr, zscore
 from scipy import signal
-from scipy.cluster.hierarchy import linkage, dendrogram
+from scipy.cluster.hierarchy import linkage, dendrogram, leaves_list, fcluster
 import umap
 from toomanycells import TooManyCells as tmc
 import anndata as ad
@@ -162,6 +162,19 @@ def validate_biological_relevance(pred_genes, ground_truth_geminin, save, name="
     plt.ylabel("Z-Score Normalized Values")
     plt.tight_layout()
     plt.savefig(os.path.join(save, f"{name}_trend_comparison.png"))
+    plt.close()
+    # plot the same but in Altair
+    altair_df = pd.DataFrame({
+        "Time Point": np.concatenate([np.arange(len(z_genes))*0.5, np.arange(len(z_geminin))*0.5]), # convert to hours
+        "Z-Score": np.concatenate([z_genes, z_geminin]),
+        "Type": ["Expression"]*len(z_genes) + ["Geminin"]*len(z_geminin)
+    })
+    alt_chart = alt.Chart(altair_df).mark_line().encode(
+        x='Time Point:Q',
+        y='Z-Score:Q',
+        color='Type:N'
+    ).interactive()
+    alt_chart.save(os.path.join(save, f"{name}_trend_comparison_altair.html"))
     
     # Plot 2: Cross-Correlation
     # plt.subplot(1, 2, 2)
@@ -198,8 +211,9 @@ def per_gene_lag_correlation_heatmap(pred_genes, ground_truth_geminin, gene_name
     # heatmap_data = np.zeros((len(gene_names), len(lags)))
     print("Computing lagged correlation for each gene...")
     lags = signal.correlation_lags(pred_genes.shape[0], ground_truth_geminin.shape[0], mode='full')
+    val_norm = np.array([len(ground_truth_geminin) - abs(lag) for lag in lags])
     heatmap_data = [(signal.correlate(zscore(pred_genes[:, i].reshape(-1)), zscore(ground_truth_geminin.reshape(-1)), 
-                    mode='full') )/ground_truth_geminin.shape[0]
+                    mode='full') )/ val_norm
                     for i in range(gene_names.shape[0])]
     heatmap_data = np.array(heatmap_data)
     np.save(os.path.join(save, f"{name}_lagged_correlation_data.npy"), heatmap_data)
@@ -220,39 +234,183 @@ def per_gene_lag_correlation_heatmap(pred_genes, ground_truth_geminin, gene_name
     #     z_genes = zscore(pred_genes[:, i])
     #     z_geminin = zscore(ground_truth_geminin)
     #     heatmap_data[i, j] = signal.correlate(z_genes, z_geminin, mode='full')[j]
+
+    # chop out 30% of the both sides of the heatmap to focus on the most relevant lags
+    num_lags = heatmap_data.shape[1]
+    chop_size = int(num_lags * 0.3)
+    sorted_data = sorted_data[:, chop_size:-chop_size]
+    lags = lags[chop_size:-chop_size]
     
-    # Plot heatmap and cluster with dendrogram
+    # Plot heatmap
     plt.figure(figsize=(20, 20))
     sns.heatmap(sorted_data, xticklabels=lags, yticklabels=sorted_genes, cmap='coolwarm', center=0)
     plt.title(f"Lagged Correlation between Predicted {name} Genes and Geminin")
     plt.xlabel("Lag (Time Points)")
     plt.ylabel("Genes")
     plt.tight_layout()
-    plt.savefig(os.path.join(save, f"{name}_lagged_correlation_heatmap.png"))
-    plt.close()
-    # Plot dendrogram
-    dendro = linkage(sorted_data, method='ward')
-    sns.set(font_scale=0.4)
-    plt.figure(figsize=(60, 60))
-    # overlay the heatmap with the dendrogram
-    cg = sns.clustermap(sorted_data, row_linkage=dendro, col_cluster=False, 
-                        yticklabels=sorted_genes, xticklabels=lags, cmap='coolwarm', center=0)
-    # dendrogram(dendro, labels=gene_names, orientation='right')
-    plt.title("Hierarchical Clustering of Genes based on Lagged Correlation")
-    plt.xlabel("Correlation")
-    plt.ylabel("Genes")
-    plt.tight_layout()
-    plt.savefig(os.path.join(save, f"{name}_gene_clustering_dendrogram.png"))
-    # save the list of cluster of genes
-    from scipy.cluster.hierarchy import fcluster
-    cluster_labels = fcluster(dendro, t=2, criterion='maxclust')
-    gene_clusters = pd.DataFrame({
-        "gene": gene_names,
-        "cluster": cluster_labels
-    })
-    gene_clusters.to_csv(os.path.join(save, f"{name}_gene_clusters.csv"), index=False)
+    plt.savefig(os.path.join(save, f"{name}_lagged_correlation_heatmap_unbiased.png"))
     plt.close()
     
+    if len(gene_names) > 2: # only plot dendrogram if there are more than 2 genes
+        # Plot dendrogram
+        dendro = linkage(sorted_data, method='ward')
+        # sort the datafram by the order of the dendrogram, where the rows (genes) are reordered according to the hierarchical clustering
+        leaf_indices = leaves_list(dendro)
+        row_sorted_data = sorted_data[leaf_indices, :]
+        row_sorted_genes = sorted_genes[leaf_indices]
+        # plot it with Altair
+        heatmap_df_nonmelt = pd.DataFrame(row_sorted_data, columns=lags, index=row_sorted_genes)
+        heatmap_df_nonmelt.to_csv(os.path.join(save, f"{name}_lagged_correlation_heatmap_data_unbiased.csv"))
+        heatmap_df = heatmap_df_nonmelt.reset_index().melt(id_vars='index', var_name='lag', value_name='correlation')
+        # add a negative to all the values so that we can use redblue where red is positive correlation and blue is negative correlation
+        heatmap_df['correlation'] = heatmap_df['correlation'] * -1
+        # plot the heatmap with Altair, where x axis is lag, y axis is gene, and color is correlation value with a diverging color scheme centered at 0
+        heatmap_chart = alt.Chart(heatmap_df).mark_rect().encode(
+            x='lag:O',
+            y=alt.Y('index:N', sort=row_sorted_genes.tolist()),
+            color=alt.Color('correlation:Q', scale=alt.Scale(scheme='redblue', domainMid=0))
+        ).interactive()
+        heatmap_chart.save(os.path.join(save, f"{name}_lagged_correlation_heatmap_unbiased_altair.html"))
+        # plot the dendrogram only, withouth the heatmap, and save it as a separate figure
+        plt.figure(figsize=(60, 60))
+        dendrogram(dendro, labels=sorted_genes, orientation='right', truncate_mode='lastp', p=5)
+        # remove figure axes and save
+        plt.axis('off')
+        plt.tight_layout()
+        plt.savefig(os.path.join(save, f"{name}_gene_clustering_dendrogram_only_unbiased.svg"))
+
+        # plot the dendrogram only, withouth the heatmap, and save it as a separate figure
+        sns.set(font_scale=0.4)
+        plt.figure(figsize=(60, 60))
+        # overlay the heatmap with the dendrogram
+        cg = sns.clustermap(sorted_data, row_linkage=dendro, col_cluster=False, 
+                            yticklabels=sorted_genes, xticklabels=lags, cmap='coolwarm', center=0)
+        # dendrogram(dendro, labels=gene_names, orientation='right')
+        plt.title("Hierarchical Clustering of Genes based on Lagged Correlation")
+        plt.xlabel("Correlation")
+        plt.ylabel("Genes")
+        plt.tight_layout()
+        plt.savefig(os.path.join(save, f"{name}_gene_clustering_dendrogram_unbiased.png"))
+        # save the list of cluster of genes
+        num_clusters = 5
+        gene_clusters_dict = {}
+        for i in range(num_clusters):
+            cluster_labels = fcluster(dendro, t=i+1, criterion='maxclust')
+            gene_clusters_dict[f"max_cluster_{i+1}"] = cluster_labels
+        gene_clusters = pd.DataFrame(gene_clusters_dict, index=sorted_genes)
+        gene_clusters.to_csv(os.path.join(save, f"{name}_gene_clusters.csv"))
+        plt.close()
+        ret = (gene_clusters, heatmap_df_nonmelt)
+    else:
+        ret = None
+    print("Auto correlation analysis finished")
+    return ret
+
+def enrichr_analysis(gene_list, database, save, name="gene_set"):
+    '''
+    Perform EnrichR using the database. Repeat for each number of cluters
+    '''
+    import gseapy as gp
+    print("Performing EnrichR analysis for gene clusters...")
+    save_path = os.path.join(save, f"enrichr_{name}")
+    os.makedirs(save_path, exist_ok=True)
+    enrichr_results = {}
+    # iterate through the columns
+    for col in tqdm(gene_list.columns):
+        # iterate through all the unique cluster labels in this column
+        for cluster in gene_list[col].unique():
+            enrichr_genes = gene_list[gene_list[col] == cluster].index.tolist()
+            res = gp.enrichr(gene_list=enrichr_genes, 
+                             gene_sets=database, outdir=os.path.join(save_path, f"enrichr_{col}_{cluster}_{name}"), cutoff=0.5,
+                             verbose=False, no_plot=True)
+            # get the most enriched according to max combined score, and save the name of the pathway and the p-value to the enrichr_results dict
+            if res.results.shape[0] > 0:
+                cluster_df = res.results.sort_values("Combined Score", ascending=False)
+                cluster_df = cluster_df[cluster_df["Adjusted P-value"] < 0.25].iloc[0]
+                enrichr_results[f"{col}_{cluster}"] = {
+                    "pathway": cluster_df["Term"],
+                    "adj_p_value": cluster_df["Adjusted P-value"],
+                    "combined_score": cluster_df["Combined Score"],
+                    "overlap_genes": cluster_df["Genes"]
+                }
+    print("EnrichR analysis completed for all clusters.")
+    print("Saving EnrichR results...")
+    # save the enrichr results to a csv file
+    enrichr_results_df = pd.DataFrame(enrichr_results).T
+    enrichr_results_df = enrichr_results_df.reset_index().rename(columns={"index": "cluster"})
+    # enrichr_results_df = enrichr_results_df.explode("pathway").explode("adj_p_value").explode("combined_score").explode("overlap_genes")
+    enrichr_results_df.to_csv(os.path.join(save_path, f"enrichr_results_{name}.csv"))
+    # plot an Enrichment bar plot with Altair, showing the top enrichment for each cluster
+    # x is Combined Score, y is pathway, color is the key in enrichr_results
+    chart = alt.Chart(enrichr_results_df).mark_bar().encode(
+        x=alt.X("combined_score:Q", title="Combined Score"),
+        y=alt.Y("pathway:N", title="Pathway"),
+        color=alt.Color("cluster:N", title="Cluster"),
+    )
+    chart.save(os.path.join(save_path, f"enrichr_chart_{name}.html"))
+
+
+    print("EnrichR analysis completed and results saved to ", os.path.join(save_path, f"enrichr_results_{name}.csv"))
+
+def plot_fft(gene_cluster_df, gene_expression, gene_names, mit_level, save, name="all_genes", pad_length=512):
+    '''
+    Plot the FFT of the mean expression of each gene cluster and the mitosis levels, and see if they have similar frequency components.
+    args:
+    gene_cluster_df: DataFrame with gene names as index and cluster labels as columns
+    gene_expression: Array of shape (num_time_points, num_genes) of predicted gene expression, not z-score normalized
+    gene_names: List of gene names corresponding to the columns in gene_expression
+    mit_level: Array of shape (num_time_points,) of Geminin levels, not z-score normalized
+    '''
+    from scipy.fft import rfft, rfftfreq
+    print("Running Fast Fourier Transform analysis to compare frequency components of gene expression and mitosis levels...")
+    all_genes = gene_cluster_df.index.tolist()
+    # z-score normalized
+    z_expression = zscore(gene_expression, axis=0)
+    z_mitosis = zscore(mit_level)
+    df_dict = {"magnitude": [], "frequency": [], "type": []}
+    for col in tqdm(gene_cluster_df.columns):
+        plt.figure(figsize=(10, 5))
+        for cluster in gene_cluster_df[col].unique():
+            cluster_genes = gene_cluster_df[gene_cluster_df[col] == cluster].index.tolist()
+            cluster_gene_indices = [i for i, g in enumerate(gene_names) if g in cluster_genes]
+            cluster_expression = z_expression[:, cluster_gene_indices].mean(axis=1)
+            # recenter
+            centered_signal = cluster_expression - np.mean(cluster_expression)
+            N = len(centered_signal)
+            window = np.hanning(N)
+            windowed_signal = centered_signal * window
+            yf = rfft(windowed_signal, n=pad_length)
+            xf = rfftfreq(pad_length, d=1)
+            plt.plot(xf, np.abs(yf), label=f"{col}_{cluster}")
+            df_dict["magnitude"].extend(np.abs(yf).tolist())
+            df_dict["type"].extend([f"{col}_{cluster}"] * len(xf))
+            df_dict["frequency"].extend(xf.tolist())
+        # plot mitosis level FFT
+        centered_mitosis = z_mitosis - np.mean(z_mitosis)
+        window = np.hanning(len(centered_mitosis))
+        windowed_mitosis = centered_mitosis * window
+        yf_mitosis = rfft(windowed_mitosis, n=pad_length)
+        xf_mitosis = rfftfreq(pad_length, d=1)
+        df_dict["magnitude"].extend(np.abs(yf_mitosis).tolist())
+        df_dict["type"].extend(["Mitosis Level"] * len(xf_mitosis))
+        df_dict["frequency"].extend(xf_mitosis.tolist())
+        plt.plot(xf_mitosis, np.abs(yf_mitosis), label="Mitosis Level", color='k', linestyle='--')
+        plt.xlabel("Frequency")
+        plt.ylabel("Magnitude")
+        plt.title(f"FFT of Gene Clusters and Mitosis Levels - {name}")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(save, f"{name}_fft_gene_clusters.png"))
+        plt.close()
+    # plot with altair
+    df = pd.DataFrame(df_dict)
+    df.to_csv(os.path.join(save, f"{name}_fft_gene_clusters_df.csv"), index=False)
+    fft_chart = alt.Chart(df).mark_line().encode(
+        x='frequency:Q',
+        y='magnitude:Q',
+        color='type:N'
+    ).interactive()
+    fft_chart.save(os.path.join(save, f"{name}_fft_gene_clusters_altair.html"))
 
 def main():
     parser = argparse.ArgumentParser(description="Validate mitotic levels")
@@ -275,6 +433,7 @@ def main():
     parser.add_argument("--test_mode", action="store_true", help="Whether to run in test mode to visually examine green value")
     parser.add_argument("--load_saved_npy", action="store_true", help="Whether to load saved numpy files instead of running inference again")
     parser.add_argument("--scramble", action="store_true", help="Whether to scramble the input images for testing as a baseline.")
+    parser.add_argument("--database", type=str, default="GO_Biological_Process_2021", help="Database to use for EnrichR analysis")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -567,7 +726,17 @@ def main():
         compute_difference_test(mean_exp_all, mitosis_all, args.output_dir, name=gene_set_name)
         compute_granger_causality(mean_exp_all, mitosis_all, max_lag=10, save=args.output_dir, name=gene_set_name)
         if len(gene_names) > 1:
-            per_gene_lag_correlation_heatmap(exp_all, mitosis_all, gene_names, save=args.output_dir, name=gene_set_name)
+            gene_cluster_df, heatmap = per_gene_lag_correlation_heatmap(exp_all, mitosis_all, gene_names, save=args.output_dir, name=gene_set_name)
+            # plot this for geminin for sainity check
+            per_gene_lag_correlation_heatmap(mitosis_all.reshape(-1,1), mitosis_all, np.array(["geminin"]), save=args.output_dir, name="geminin_control")
+            # run enrichr for the gene clusters
+            if gene_cluster_df is not None:
+                enrichr_analysis(gene_cluster_df, database=args.database, save=args.output_dir, name=f"{gene_set_name}_clusters")
+            # plot fast fourier transform to see if there is any periodicity in the gene expression and mitosis levels
+            plot_fft(gene_cluster_df, exp_all, gene_names, mitosis_all, save=args.output_dir, name=gene_set_name)
+            # plot the fft with cross-validation cofficients to see if they have similar frequency components
+            plot_fft(gene_cluster_df, heatmap.T.values, heatmap.index.values, mitosis_all, save=args.output_dir, name=f"{gene_set_name}_cross_validation")
+
 
         # plot at different scale to see trend
         plt.figure(figsize=(10, 6))
