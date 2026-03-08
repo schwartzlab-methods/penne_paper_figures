@@ -263,7 +263,6 @@ def main():
     parser.add_argument("--spaghetti_model", type=str, default=None,
                         help="Path to the spaghetti model. If None, will not use spaghetti conversion")
     parser.add_argument("--no_spaghetti", action="store_true", help='Whether to not use the Spaghetti model')
-    parser.add_argument("--name", type=str, default="all_genes", help="Name to identify the gene set used for validation in the output")
     parser.add_argument("--gene_names", type=str, required=True,
                         help="Path to the gene names file")
     parser.add_argument("--gene_set", type=str, default=None,
