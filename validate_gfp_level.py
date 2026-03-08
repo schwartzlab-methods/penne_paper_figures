@@ -369,7 +369,7 @@ def main():
     
     # filter out negative GFP levels which are unreliable measurements
     valid_indices = gfp_L >= 0
-    pred_L_z = pred_L - pred_L.mean(axis=1, keepdims=True) / (pred_L.std(axis=1, keepdims=True) + 1e-8) # z-score normalization
+    pred_L_z = (pred_L - pred_L.mean(axis=1, keepdims=True)) / (pred_L.std(axis=1, keepdims=True) + 1e-8)  # z-score normalization
     pred_L = pred_L[valid_indices]
     pred_L_z = pred_L_z[valid_indices]
     gfp_L = gfp_L[valid_indices]
