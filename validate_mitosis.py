@@ -650,8 +650,8 @@ def main():
 
     # correlation analysis
     pearson_corr, pearson_p, spearman_corr, spearman_p, r2 = compute_correlation(
-        mean_exp = np.array([mean_exp_per_frame[key] for key in all_keys for _ in range(len(mean_exp_per_frame[key]))]),
-        mit_levels = np.array([mitosis_per_frame[key] for key in all_keys for _ in range(len(mitosis_per_frame[key]))]),
+        mean_exp = np.array([v for key in all_keys for v in mean_exp_per_frame[key]]),
+        mit_levels = np.array([v for key in all_keys for v in mitosis_per_frame[key]]),
         # mean_exp = np.mean(pred_L, axis=1),
         # mit_levels = mitosis_L
     )
