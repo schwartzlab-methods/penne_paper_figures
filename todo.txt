@@ -12,7 +12,7 @@ Immediate todos:
         - confluency TMC / UMAP
         - apical junction box plot
         - show the coculture gene set marker box plot and GSEA
-        - show gating figures and GSEA cellular location for gating (scrambled and non-scrambed)
+        - show gating figures and GSEA cellular location for gating (scrambled and non-scrambled)
         - show training stats
         - show full list of genes that are high confident
         - show a few gene expression vs geminin in the supplemental
