@@ -1146,7 +1146,7 @@ class ShaneSeqCellTypeDataset(Dataset):
                 score = (green_value / (total_pixels) * 100).item()
             else:
                 green_value = torch.sum(mask)
-                # catch very small or very large cell areas, return negative score to indicate unreliable measuremen
+                # catch very small or very large cell areas, return negative score to indicate unreliable measurement
                 img_size = img.shape[1] * img.shape[2]
                 if total_pixels < 0.2*img_size or total_pixels > 0.8*img_size:
                     score = -1.0
