@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 from scipy.stats import spearmanr
+from scipy.cluster.hierarchy import linkage, dendrogram, leaves_list, fcluster
 import altair as alt
 
 ## plotting settings
@@ -158,12 +159,57 @@ def main():
                 else:
                     corr, _ = spearmanr(gate_values, gene_exp)
                 gene_gate_corr[gene_idx, dim_idx] = corr
+        
+        all_cols = np.array([i for i in range(gate_dim)])
+        # Filter out nans
+        valid_rows = ~np.isnan(gene_gate_corr).any(axis=1)
+        gene_gate_corr = gene_gate_corr[valid_rows, :]
+        gene_names = genes_to_use[valid_rows]
+        valid_cols = ~np.isnan(gene_gate_corr).any(axis=0)
+        gene_gate_corr = gene_gate_corr[:, valid_cols]
+        all_cols = all_cols[valid_cols]
 
+
+        # cluster
+        dendro = linkage(gene_gate_corr, method='ward')
+        # sort the datafram by the order of the dendrogram, where the rows (genes) are reordered according to the hierarchical clustering
+        leaf_indices = leaves_list(dendro)
+        row_sorted_data = gene_gate_corr[leaf_indices, :]
+        row_sorted_genes = gene_names[leaf_indices]
+        
+        dendro_col = linkage(gene_gate_corr.T, method='ward')
+        col_leaf_indices = leaves_list(dendro_col)
+        col_sorted_data = row_sorted_data[:, col_leaf_indices]
+        col_sorted_cols = all_cols[col_leaf_indices]
+
+        # generate heatmap
+        heatmap_df_nonmelt = pd.DataFrame(col_sorted_data, index=row_sorted_genes, columns=col_sorted_cols)
+        heatmap_df_nonmelt.to_csv(os.path.join(args.output_dir, "gene_gate_correlation_matrix.csv"))
+        heatmap_df = heatmap_df_nonmelt.reset_index().melt(id_vars='index', var_name='Gate Dimension', value_name='Correlation')
+        heatmap_df.rename(columns={"index": "Gene"}, inplace=True)
+
+        # plot with alair
+        heatmap_chat = alt.Chart(heatmap_df).mark_rect().encode(
+            x=alt.X('Gate Dimension:O', title='Gate Dimension', sort=col_sorted_cols.tolist()),
+            y=alt.Y('Gene:N', title='Gene', sort=row_sorted_genes.tolist()),
+            color=alt.Color('Correlation:Q', title='Correlation', scale=alt.Scale(scheme='redblue', domainMid=0))
+        )
+        heatmap_chat.save(os.path.join(args.output_dir, "gene_gate_correlation_heatmap.html"))
+
+        # plot dendrogram
+        plt.figure(figsize=(60, 60))
+        dendrogram(dendro, labels=gene_names, orientation='right', truncate_mode='lastp', p=3)
+        # remove figure axes and save
+        plt.axis('off')
+        plt.tight_layout()
+        plt.savefig(os.path.join(args.output_dir, "gene_clustering_dendrogram.svg"))
+        plt.close()
+    
         # cluster genes based on gate correlation profiles
         plt.figure(figsize=(18,18))
         # make text font size smaller for better visualization
         sns.set(font_scale=0.5)
-        cg = sns.clustermap(gene_gate_corr, cmap='bwr', center=0, yticklabels=genes_to_use)
+        cg = sns.clustermap(gene_gate_corr, cmap='bwr', center=0, yticklabels=gene_names)
         plt.xlabel("Gate Dimension")
         plt.ylabel("Genes")
         plt.title("Gene x Gate Correlation Matrix")
@@ -171,13 +217,12 @@ def main():
         plt.close()
         print("Gene x Gate correlation heatmap saved to ", args.output_dir)
         # save the linkage matrix for genes
-        linkage = cg.dendrogram_row.linkage
-        np.save(os.path.join(args.output_dir, "gene_gate_correlation_linkage.npy"), linkage)
+        linkage_cg = cg.dendrogram_row.linkage
+        np.save(os.path.join(args.output_dir, "gene_gate_correlation_linkage.npy"), linkage_cg)
         print("Gene linkage matrix saved to ", os.path.join(args.output_dir, "gene_gate_correlation_linkage.npy"))
         # get the clusters based on the linkage distance
-        from scipy.cluster.hierarchy import fcluster
-        clusters = fcluster(linkage, args.max_num_clusters, criterion='maxclust')
-        gene_cluster_df = pd.DataFrame({"Gene": genes_to_use, "Cluster": clusters})
+        clusters = fcluster(linkage_cg, args.max_num_clusters, criterion='maxclust')
+        gene_cluster_df = pd.DataFrame({"Gene": gene_names, "Cluster": clusters})
         gene_cluster_df.to_csv(os.path.join(args.output_dir, "gene_clusters.csv"), index=False)
         print("Gene clusters saved to ", os.path.join(args.output_dir, "gene_clusters.csv"))
         # for each cluster, get the top 50 features with highest average correlation

@@ -1124,7 +1124,7 @@ class ShaneSeqCellTypeDataset(Dataset):
             # phase_img = tfm(phase_tensor[i].cpu())
             # phase_img.save(f"/home/zf2dong/scratch/temp/tem_phase_tensor/debug_phase_{i}.png")
 
-            img = image_tensor[i, c_idx:c_idx+1, :, :] 
+            img = image_tensor[i, c_idx:c_idx+1, :, :] # shape： (1, H, W)
             cell_mask = cell_masks[i]
             
             # --- STEP 1: Gaussian Blurs ---
@@ -1138,18 +1138,20 @@ class ShaneSeqCellTypeDataset(Dataset):
             mask = (signal > min_signal).float() * cell_mask.float()
                        
             # Score
+            total_pixels = torch.sum(cell_mask)
             if integrated: # use integrated density, normalize by saturation point
                 norm_signal = torch.clamp(signal / saturation_point, min=0.0, max=1.0)
                 valid_signal = norm_signal * mask
                 green_value = torch.sum(valid_signal)
+                score = (green_value / (total_pixels) * 100).item()
             else:
                 green_value = torch.sum(mask)
-            total_pixels = torch.sum(cell_mask)
-            # catch very small cell areas
-            if total_pixels < 500:
-                score = 0.0
-            else:
-                score = (green_value / (total_pixels) * 100).item()
+                # catch very small or very large cell areas, return negative score to indicate unreliable measurement
+                img_size = img.shape[1] * img.shape[2]
+                if total_pixels < 0.2*img_size or total_pixels > 0.8*img_size:
+                    score = -1.0
+                else:
+                    score = (green_value / (total_pixels) * 100).item()
             scores.append(score)
 
         return torch.tensor(scores)  #shape (B,)

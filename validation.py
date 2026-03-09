@@ -136,6 +136,7 @@ def main():
     features_pcm_translated_gated_L = []
     img_path_L = []
     data_len = len(val_loader)
+    print(f"Total validation samples: {data_len}")
     with torch.no_grad():
         for batch in tqdm(val_loader, total=len(val_loader)):
             if (data_len < 100000) or (random.random() > 0.8):
