@@ -206,7 +206,7 @@ def linear_regression(X, X_label, y, out , gt_level=None, gt_level_neg=None):
     reg_line.fit(y, y_pred)
     y_pred_reg = reg_line.predict(y)
 
-    # if gt_level is propvided, compute the cosine similarity between the inferred gene expression and the gt_level
+    # if gt_level is provided, compute the cosine similarity between the inferred gene expression and the gt_level
     if gt_level is not None and gt_level_neg is not None:
         similarity = cosine_similarity(X, gt_level) - cosine_similarity(X, gt_level_neg)
         # get colour palette based on gt_level
