@@ -206,14 +206,16 @@ def main():
         plt.close()
     
         # cluster genes based on gate correlation profiles
-        plt.figure(figsize=(18,18))
+        plt.figure(figsize=(50,35))
         # make text font size smaller for better visualization
         sns.set(font_scale=0.5)
         cg = sns.clustermap(gene_gate_corr, cmap='bwr', center=0, yticklabels=gene_names)
         plt.xlabel("Gate Dimension")
         plt.ylabel("Genes")
         plt.title("Gene x Gate Correlation Matrix")
+        plt.tight_layout()
         plt.savefig(os.path.join(args.output_dir, "gene_gate_correlation_heatmap_last_layer.svg"))
+        plt.savefig(os.path.join(args.output_dir, "gene_gate_correlation_heatmap_last_layer.png"))
         plt.close()
         print("Gene x Gate correlation heatmap saved to ", args.output_dir)
         # save the linkage matrix for genes
@@ -264,7 +266,7 @@ def main():
         # y axis: top terms grouped by cluster id, x axis: combined score
         all_terms = []
         for cluster_id, df in final_enrichment_results.items():
-            df = df[df["P-value"] < 0.05]
+            df = df[df["Adjusted P-value"] < 0.25] # filter by adjusted p-value
             # only keep infinity if there are more than two items in Gene
             df = df[df["Genes"].str.split(";").apply(len) >= 2]
             # replace inf with a fixed large number (1.1 times the max finite combined score)
