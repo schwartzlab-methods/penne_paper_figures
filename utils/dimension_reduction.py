@@ -41,6 +41,7 @@ def plot_umap(data, labels, save_dir, exp_name, extractor,
     plt.close()
 
 def tmc_plot(data, labels, save_dir, use_neg_modularity=False):
+    print("Running TMC...")
     adata = ad.AnnData(X=data, obs=pd.DataFrame({"cell_type": labels.tolist()}))
     tmc_obj = tmc(adata, os.path.join(save_dir, "tmc_output"))
     tmc_obj.run_spectral_clustering(modularity_threshold=-1e9 if use_neg_modularity else 1e-9)
@@ -67,7 +68,7 @@ def prepare_data(data, labels):
     data_array = np.concatenate(data_L, axis=0)
     return data_array, label_array
 
-def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc, do_negative_modularity):
+def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc, do_negative_modularity, do_umap):
     original, cell_type = prepare_data(path_1, path_label)
 
     print("Numpy files loaded")
@@ -91,16 +92,15 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc, do_nega
     else:
         embedding_original = pca.fit_transform(original)
     var_ex_original = pca.explained_variance_ratio_
-
     # prep pandas for altair scatter
-    df_original = pd.DataFrame({f"PC 1 ({var_ex_original[0]:.2f})": embedding_original[:, 0],
-                                f"PC 2 ({var_ex_original[1]:.2f})": embedding_original[:, 1],
+    df_original = pd.DataFrame({f"PC1": embedding_original[:, 0],
+                                f"PC2": embedding_original[:, 1],
                                 "Classes": cell_type})
     
     # plot with altair
     scatter1 = alt.Chart(df_original).mark_point().encode(
-        x=f"PC 1 ({var_ex_original[0]:.2f})",
-        y=f"PC 2 ({var_ex_original[1]:.2f})",
+        x=alt.X("PC1", title=f"PC1 (Variance explained: {var_ex_original[0]:.2f})"),
+        y=alt.Y("PC2", title=f"PC2 (Variance explained: {var_ex_original[1]:.2f})"),
         color="Classes",
     )
     scatter1.interactive().save(os.path.join(save_dir, f"feature_pca_{extractor_name}_{exp_name}_original.html"))
@@ -118,10 +118,12 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc, do_nega
     plt.close()
 
     # plot umap with plt
-    if extractor_name == "phikon-v2":
-        plot_umap(original[:,0,0,:], cell_type, save_dir, extractor_name, exp_name)
-    else:
-        plot_umap(original, cell_type, save_dir, extractor_name, exp_name)
+    if do_umap:
+        print("Running UMAP...")
+        if extractor_name == "phikon-v2":
+            plot_umap(original[:,0,0,:], cell_type, save_dir, extractor_name, exp_name)
+        else:
+            plot_umap(original, cell_type, save_dir, extractor_name, exp_name)
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description="Plotting dimension reduction")
@@ -129,9 +131,10 @@ if __name__ == "__main__":
     argparser.add_argument("--path", type=str, nargs="+", help="Paths to feature extractor features")
     argparser.add_argument("--path_label", type=str, nargs="+", help="Paths or names to the labels")
     argparser.add_argument("--do_tmc", action="store_true", help="Run TMC")
+    argparser.add_argument("--do_umap", action="store_true", help="Run UMAP")
     argparser.add_argument("--do_negative_modularity", action="store_true", help="Run TMC with negative modularity")
     argparser.add_argument("--extractor", type=str, help="name of the feature extractor")
     argparser.add_argument("--exp_name", type=str, help="name of the experiment")
     args = argparser.parse_args()
-    main(args.path, args.path_label, args.save_dir, args.extractor, args.exp_name, args.do_tmc, args.do_negative_modularity)
+    main(args.path, args.path_label, args.save_dir, args.extractor, args.exp_name, args.do_tmc, args.do_negative_modularity, args.do_umap)
 
