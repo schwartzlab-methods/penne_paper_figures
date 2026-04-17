@@ -121,9 +121,9 @@ def main(path_1, path_label, save_dir, extractor_name, exp_name, do_tmc, do_nega
     if do_umap:
         print("Running UMAP...")
         if extractor_name == "phikon-v2":
-            plot_umap(original[:,0,0,:], cell_type, save_dir, extractor_name, exp_name)
+            plot_umap(original[:,0,0,:], cell_type, save_dir, exp_name=exp_name, extractor=extractor_name)
         else:
-            plot_umap(original, cell_type, save_dir, extractor_name, exp_name)
+            plot_umap(original, cell_type, save_dir, exp_name=exp_name, extractor=extractor_name)
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description="Plotting dimension reduction")
