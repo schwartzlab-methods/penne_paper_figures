@@ -224,8 +224,17 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         box_plot.save(os.path.join(out, f"summary_marker_expression_boxplot.html"))
     
         # stats test for summary plot
-        p_value_summary = permutation_test(marker_in_cell_concat, marker_across_cell_concat)
-        print("Permutation test p-value for summary marker expression:", p_value_summary)
+        p_value_summary_permutation = permutation_test(marker_in_cell_concat, marker_across_cell_concat)
+        stats, p_value_summary_mannwhitney = mannwhitneyu(marker_in_cell_concat, marker_across_cell_concat)
+        print("Permutation test p-value for summary marker expression:", p_value_summary_permutation)
+        print("Mann-Whitney U test p-value for summary marker expression:", p_value_summary_mannwhitney)
+        with open(os.path.join(out, "summary_marker_expression_stats.txt"), "w") as f:
+            f.write("Summary statistics for marker gene expression comparison:\n")
+            f.write("Mean for in cell type: {:.4f}\n".format(marker_in_cell_concat.mean()))
+            f.write("Mean for across cell type: {:.4f}\n".format(marker_across_cell_concat.mean()))
+            f.write(f"Permutation test p-value: {p_value_summary_permutation:.4e}\n")
+            f.write(f"Mann-Whitney U test p-value: {p_value_summary_mannwhitney:.4e}\n")
+            f.write(f"Mann-Whitney U test statistic: {stats:.4f}\n")
 
     return results_df
 

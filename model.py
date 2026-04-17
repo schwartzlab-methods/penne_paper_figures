@@ -305,6 +305,39 @@ class GeneExpPredVisiumHD(pl.LightningModule):
                 x = x[:, :self.bio_feature_size]
             return x
 
+    def get_feature_before_output(self, x: torch.Tensor, if_convert: bool=False,
+                                if_translate: bool=True, if_ortho: bool=True, scramble=False) -> torch.Tensor:
+        '''Get the feature representation before the output layer of the predictor.
+
+        Args:
+            x (torch.Tensor): 
+                Input tensor of the image in the shape of (batch_size, num_channels, height, width).
+            if_convert (bool, optional): 
+                Whether to use the converter to convert into H&E like images. Defaults to False.
+            if_translate (bool, optional): 
+                Whether to use the translator for better domain alignment. Defaults to True.
+            if_ortho (bool, optional): 
+                Whether to use the orthogonal translator. Defaults to True.
+            scramble (bool, optional):
+                Whether to scramble the input image for testing. Defaults to False.
+
+        Returns:
+            torch.Tensor: 
+                Feature representation before the output layer of the predictor in the shape of (batch_size, hidden_size).
+        '''
+        torch.manual_seed(42)
+        with torch.no_grad():
+            if scramble:
+                x = x[:, :, torch.randperm(x.size(2)), :][:, :, :, torch.randperm(x.size(3))]
+            if if_convert:
+                x = self.converter(x)
+            x = self.image_processor(x)
+            x = self.feature_extractor(x).last_hidden_state[:, 0, :].view(x.shape[0], -1)
+            if if_ortho:
+                x = self.feature_translator(x)[:, :self.bio_feature_size]
+            out = self.predictor.get_feature_before_output(x)
+        return out
+
     def compute_gate(self, x: torch.Tensor, if_convert: bool=False, 
                      if_translate: bool=True, if_ortho: bool=True, 
                      input_feature: bool=False, scramble=False) -> torch.Tensor:
