@@ -159,8 +159,16 @@ def main():
                 features_he = model.compute_feature(he_image, if_convert=False, if_translate=True, if_ortho=True)
                 features_pcm = model.compute_feature(pcm, if_convert=True, if_translate=True, if_ortho=True)
                 # translated gated features (ie with translator and gate)
-                features_he_translated_gated = model.get_feature_before_output(he_image, if_convert=False, if_ortho=True)
-                features_pcm_translated_gated = model.get_feature_before_output(pcm, if_convert=True, if_ortho=True)
+                try:
+                    features_he_translated_gated = model.get_feature_before_output(he_image, if_convert=False, if_ortho=True)
+                    features_pcm_translated_gated = model.get_feature_before_output(pcm, if_convert=True, if_ortho=True)
+                except AttributeError as exc:
+                    raise RuntimeError(
+                        "The loaded model does not support `get_feature_before_output`. "
+                        "This validation path requires a predictor implementation that exposes "
+                        "gated features before the output layer (for example a GMLP-based predictor). "
+                        "You may be using a checkpoint trained with `do_gmlp=False`."
+                    ) from exc
                 # domain features
                 features_he_translated_domain = model.compute_domain_feature(he_image, if_convert=False, if_ortho=True)
                 features_pcm_translated_domain = model.compute_domain_feature(pcm, if_convert=True, if_ortho=True)
