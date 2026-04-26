@@ -130,6 +130,8 @@ def main():
     features_he_L = []
     features_he_non_translated_L = []
     features_he_translated_gated_L = []
+    features_he_translated_domain_L = []
+    features_pcm_translated_domain_L = []
     features_pcm_L = []
     features_pcm_non_translate_L = []
     features_pcm_non_convert_L = []
@@ -156,11 +158,20 @@ def main():
                 # including translator for both
                 features_he = model.compute_feature(he_image, if_convert=False, if_translate=True, if_ortho=True)
                 features_pcm = model.compute_feature(pcm, if_convert=True, if_translate=True, if_ortho=True)
-                # features_he_translated_gated = model.compute_gate(he_image, if_convert=False, if_translate=True)
-                # features_pcm_translated_gated = model.compute_gate(pcm, if_convert=True, if_translate=True)
+                # translated gated features (ie with translator and gate)
+                try:
+                    features_he_translated_gated = model.get_feature_before_output(he_image, if_convert=False, if_ortho=True)
+                    features_pcm_translated_gated = model.get_feature_before_output(pcm, if_convert=True, if_ortho=True)
+                except AttributeError as exc:
+                    raise RuntimeError(
+                        "The loaded model does not support `get_feature_before_output`. "
+                        "This validation path requires a predictor implementation that exposes "
+                        "gated features before the output layer (for example a GMLP-based predictor). "
+                        "You may be using a checkpoint trained with `do_gmlp=False`."
+                    ) from exc
                 # domain features
-                features_he_translated_gated = model.compute_domain_feature(he_image, if_convert=False, if_translate=True)
-                features_pcm_translated_gated = model.compute_domain_feature(pcm, if_convert=True, if_translate=True)
+                features_he_translated_domain = model.compute_domain_feature(he_image, if_convert=False, if_ortho=True)
+                features_pcm_translated_domain = model.compute_domain_feature(pcm, if_convert=True, if_ortho=True)
                 if args.generate_predictions:
                     # remove all negative values
                     pred_exp[pred_exp < 0] = 0
@@ -171,6 +182,8 @@ def main():
                 features_pcm_L.append(features_pcm.cpu().numpy())
                 features_pcm_non_translate_L.append(features_pcm_non_translate.cpu().numpy())
                 features_pcm_non_convert_L.append(features_pcm_non_convert.cpu().numpy())
+                features_he_translated_domain_L.append(features_he_translated_domain.cpu().numpy())
+                features_pcm_translated_domain_L.append(features_pcm_translated_domain.cpu().numpy())
                 features_he_translated_gated_L.append(features_he_translated_gated.cpu().numpy())
                 features_pcm_translated_gated_L.append(features_pcm_translated_gated.cpu().numpy())
                 img_path_L.append(image_path[0])
@@ -182,22 +195,26 @@ def main():
         print(f"Final prediction shape: {pred.shape}") # spots x features
     he_features_translated = np.concatenate(features_he_L, axis=0)
     he_features_non_translated = np.concatenate(features_he_non_translated_L, axis=0)
+    he_features_translated_domain = np.concatenate(features_he_translated_domain_L, axis=0)
     he_features_translated_gated = np.concatenate(features_he_translated_gated_L, axis=0)
+    pcm_features_translated_gated = np.concatenate(features_pcm_translated_gated_L, axis=0)
     pcm_features_translated = np.concatenate(features_pcm_L, axis=0)
     pcm_features_non_translated = np.concatenate(features_pcm_non_translate_L, axis=0)
     pcm_features_non_converted  = np.concatenate(features_pcm_non_convert_L, axis=0)
-    pcm_features_translated_gated = np.concatenate(features_pcm_translated_gated_L, axis=0)
+    pcm_features_translated_domain = np.concatenate(features_pcm_translated_domain_L, axis=0)
     imgs = np.array(img_path_L)
     print("Finished generating predictions and/or features")
 
     # save numpys
     np.save(os.path.join(args.output_dir, "he_features_translated.npy"), he_features_translated)
-    np.save(os.path.join(args.output_dir, "he_features_translated_gated.npy"), he_features_translated_gated)
+    np.save(os.path.join(args.output_dir, "he_features_translated_domain.npy"), he_features_translated_domain)
     np.save(os.path.join(args.output_dir, "he_features_non_translated.npy"), he_features_non_translated)
-    np.save(os.path.join(args.output_dir, "pcm_features_translated_gated.npy"), pcm_features_translated_gated)
+    np.save(os.path.join(args.output_dir, "he_features_translated_gated.npy"), he_features_translated_gated)
+    np.save(os.path.join(args.output_dir, "pcm_features_translated_domain.npy"), pcm_features_translated_domain)
     np.save(os.path.join(args.output_dir, "pcm_features_translated.npy"), pcm_features_translated)
     np.save(os.path.join(args.output_dir, "pcm_features_non_translated.npy"), pcm_features_non_translated)
     np.save(os.path.join(args.output_dir, "pcm_features_non_converted.npy"), pcm_features_non_converted)
+    np.save(os.path.join(args.output_dir, "pcm_features_translated_gated.npy"), pcm_features_translated_gated)
     np.save(os.path.join(args.output_dir, "image_names.npy"), imgs)
 
     if args.generate_predictions:

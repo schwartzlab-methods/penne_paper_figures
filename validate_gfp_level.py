@@ -120,10 +120,10 @@ def enrichr_analysis(coef_df, database, output, name="", up_thresh=0, down_thres
                         outdir=None,
                         verbose=True)
     pos_sorted = enr_pos.results.sort_values(by='Combined Score', ascending=False)
-    pos_final = pos_sorted[pos_sorted['Adjusted P-value'] < 0.05]
+    pos_final = pos_sorted[pos_sorted['Adjusted P-value'] < 0.25]
     pos_final = pos_final[pos_final["Combined Score"] > 0]
     neg_sorted = enr_neg.results.sort_values(by='Combined Score', ascending=False)
-    neg_final = neg_sorted[neg_sorted['Adjusted P-value'] < 0.05]
+    neg_final = neg_sorted[neg_sorted['Adjusted P-value'] < 0.25]
     neg_final = neg_final[neg_final["Combined Score"] > 0]
     # save results
     pos_final.to_csv(os.path.join(output, f"shane_feature_linear_enrichr_pos_{name}.csv"), index=False)
@@ -141,6 +141,20 @@ def enrichr_analysis(coef_df, database, output, name="", up_thresh=0, down_thres
     plt.tight_layout()
     plt.savefig(os.path.join(output, f"shane_feature_linear_enrichr_{name}.png"))
     plt.close()
+    # plot in altair
+    top_pos_chart = alt.Chart(top_pos).mark_bar(color='red').encode(
+        x='Combined Score:Q',
+        y=alt.Y('Term:N', sort='-x'),
+        tooltip=['Term', 'Combined Score', 'Adjusted P-value']
+    ).interactive()
+    top_neg_chart = alt.Chart(top_neg).mark_bar(color='blue').encode(
+        x='Combined Score:Q',
+        y=alt.Y('Term:N', sort='-x'),
+        tooltip=['Term', 'Combined Score', 'Adjusted P-value']
+    ).interactive()
+    combined_chart = alt.hconcat(top_pos_chart, top_neg_chart).resolve_scale(x='shared')
+    combined_chart.save(os.path.join(output, f"shane_feature_linear_enrichr_{name}_altair.html"))
+
 
 def prerank_gsea(coef_df, database, output, name=""):
     '''
@@ -162,6 +176,7 @@ def prerank_gsea(coef_df, database, output, name=""):
                          seed=42,
                          verbose=True)
     pre_sorted = pre_res.res2d.sort_values(by='NES', ascending=False)
+    pre_sorted = pre_sorted[pre_sorted['FDR q-val'] < 0.25]
     
     up_terms = pre_sorted[pre_sorted['NES'] > 0]
     down_terms = pre_sorted[pre_sorted['NES'] < 0]
@@ -183,6 +198,21 @@ def prerank_gsea(coef_df, database, output, name=""):
     plt.tight_layout()
     plt.savefig(os.path.join(output, f"shane_feature_linear_prerank_gsea_{name}_down.png"))
     plt.close()
+
+    # plot in altair
+    top_terms_chart = alt.Chart(top_terms).mark_bar(color='red').encode(
+        x='NES:Q',
+        y=alt.Y('Term:N', sort='-x'),
+        tooltip=['Term', 'NES']
+    ).interactive()
+    top_terms_down_chart = alt.Chart(top_terms_down).mark_bar(color='blue').encode(
+        x='NES:Q',
+        y=alt.Y('Term:N', sort='-x'),
+        tooltip=['Term', 'NES']
+    ).interactive()
+    combined_prerank_chart = alt.hconcat(top_terms_chart, top_terms_down_chart).resolve_scale(x='shared')
+    combined_prerank_chart.save(os.path.join(output, f"shane_feature_linear_prerank_gsea_{name}_altair.html"))
+
 
 def linear_regression(X, X_label, y, out , gt_level=None, gt_level_neg=None):
     '''
@@ -213,8 +243,10 @@ def linear_regression(X, X_label, y, out , gt_level=None, gt_level_neg=None):
         norm = plt.Normalize(similarity.min(), similarity.max())
         cmap = plt.cm.viridis
         colors = cmap(norm(similarity))
+        plot_name = "shane_cell_type_ridge_regression_gt_only"
     else:
         colors = 'blue'
+        plot_name = "shane_cell_type_ridge_regression"
     # plot
     plt.figure(figsize=(15, 6))
     plt.scatter(y, y_pred, color=colors, alpha=0.7)
@@ -227,7 +259,7 @@ def linear_regression(X, X_label, y, out , gt_level=None, gt_level_neg=None):
     plt.xlabel("Actual")
     plt.ylabel("Predicted")
     plt.title(f"Ridge Regression (R2 = {r2:.4f}, p-value = {p_value:.4e})")
-    plt.savefig(os.path.join(out, "shane_cell_type_ridge_regression.png"))
+    plt.savefig(os.path.join(out, f"{plot_name}.png"))
     plt.close()
 
     print(f"Ridge Regression R2 score: {r2:.4f}")
@@ -256,7 +288,7 @@ def linear_regression(X, X_label, y, out , gt_level=None, gt_level_neg=None):
         tooltip=['Actual', 'Prediction']
     ).interactive()
     chart = scatter + scatter.transform_regression('Actual', 'Prediction').mark_line(color='red')
-    chart.save(os.path.join(out, "shane_cell_type_ridge_regression_altair.html"))
+    chart.save(os.path.join(out, f"{plot_name}_altair.html"))
 
     return pred_df, coef_df, r2, p_value
 
@@ -602,6 +634,12 @@ def main():
         plt.title("Log2FC between MCF10A and HCT116 Marker Gene Expression across GFP Levels")
         plt.savefig(os.path.join(args.output_dir, "shane_cell_type_log2fc_boxplot.png"))
         plt.close()
+        # replot the box plot with Altair
+        alt_chart = alt.Chart(sim_df).mark_boxplot().encode(
+            x=alt.X('GFP_Level:N', title="GFP Level", axis=alt.Axis(labelAngle=-45)),
+            y=alt.Y('Cosine_Similarity:Q', title="Log2FC (MCF10A - HCT116)")
+        ).interactive()
+        alt_chart.save(os.path.join(args.output_dir, "shane_cell_type_log2fc_boxplot_altair.html"))
         # plot a scatter plot between GFP levels and cosine similarity
         plt.figure(figsize=(15,6))
         sns.scatterplot(x=gfp_L, y=similarity_pos - similarity_neg)
@@ -620,10 +658,11 @@ def main():
         num_bins = 10
         sim_df["bin"]=pd.cut(sim_df["gfp_values"], bins=num_bins, labels=[f"Bin_{i}" for i in range(num_bins)])
         pseudo_bulk = sim_df.groupby('bin')[['gfp_values', 'Cosine_Similarity']].mean().dropna()
+        pseudo_bulk['Cosine_Similarity_sem'] = sim_df.groupby('bin')['Cosine_Similarity'].sem().dropna()
         r, p = pearsonr(pseudo_bulk['gfp_values'], pseudo_bulk['Cosine_Similarity'])
         plt.figure(figsize=(15,6))
         plt.errorbar(pseudo_bulk['gfp_values'], pseudo_bulk['Cosine_Similarity'], 
-                 yerr=sim_df.groupby('bin')['Cosine_Similarity'].sem(), 
+                 yerr=pseudo_bulk['Cosine_Similarity_sem'], 
                  fmt='o', color='black', capsize=5, label='Bin Mean +- SEM')
     
         sns.regplot(x='gfp_values', y='Cosine_Similarity', data=pseudo_bulk, scatter=False, color='red')
@@ -634,6 +673,23 @@ def main():
         plt.legend()
         plt.savefig(os.path.join(args.output_dir, "shane_cell_type_log2fc_binned_scatter.png"))
         plt.close()
+
+        # plot with Altair
+        alt_chart = alt.Chart(pseudo_bulk).mark_circle().encode(
+            x=alt.X('gfp_values:Q', title="GFP Level"),
+            y=alt.Y('Cosine_Similarity:Q', title="Log2FC (MCF10A - HCT116)"),
+            tooltip=['gfp_values', 'Cosine_Similarity']
+        ).interactive()
+        # add a regression line
+        reg_line = alt_chart.transform_regression('gfp_values', 'Cosine_Similarity').mark_line(color='red')
+        # # add error bars
+        # error_bars = alt.Chart(pseudo_bulk).mark_errorbar().encode(
+        #     x=alt.X('gfp_values:Q'),
+        #     y=alt.Y('Cosine_Similarity:Q'),
+        #     yError=alt.YError('Cosine_Similarity_sem:Q')
+        # )
+        final_alt_chart = alt_chart + reg_line #+ error_bars 
+        final_alt_chart.save(os.path.join(args.output_dir, "shane_cell_type_log2fc_binned_scatter_altair.html"))
 
     # ridge regression
     print("Running Ridge Regression")

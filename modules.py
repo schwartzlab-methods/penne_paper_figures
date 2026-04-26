@@ -286,6 +286,18 @@ class PredictorGMLP(nn.Module):
             x, gate = layer.get_x_and_gate(x)
             gate_L.append(gate)
         return torch.stack(gate_L) # Return list of gates from each layer, shape: (num_layers, batch_size, input_size)
+    
+    def get_feature_before_output(self, x):
+        '''
+        Get the feature vector before the final output projection
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, input_size)
+        Returns:
+            Tensor: Feature vector before output projection of shape (batch_size, input_size)
+        '''
+        for layer in self.layers:
+            x = layer(x)
+        return x  # Return feature vector before output projection
 
 #! modules for SPAGHETTI
 class ResidualBlock(nn.Module):
