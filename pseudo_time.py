@@ -43,6 +43,35 @@ def pseudotime_analysis_and_plot(array, labels, output_dir):
     clusters = adata.obs['louvain'].to_numpy().astype(int)
     day_0_label = np.where(labels == "day0")[0][0]
 
+    # save the UMAP plot coloured by labels
+    plt.figure(figsize=(10, 6))
+    unique_labels = np.unique(labels)
+    cmap = plt.get_cmap('viridis', len(unique_labels))
+    label_to_color = {label: cmap(i) for i, label in enumerate(unique_labels)}
+    colors = [label_to_color[label] for label in labels]
+    plt.scatter(cells[:, 0], cells[:, 1], c=colors, s=5)
+    # create a legend
+    handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=label_to_color[label], markersize=5) for label in unique_labels]
+    plt.legend(handles, unique_labels, title="Experiment Types", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.xlabel('UMAP 1')
+    plt.ylabel('UMAP 2')
+    plt.title('UMAP of Confluency Data')
+    plt.savefig(os.path.join(output_dir, "umap_confluency.png"), dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # plot with altair
+    df_altair = pd.DataFrame({'UMAP1': cells[:, 0],
+                              'UMAP2': cells[:, 1],
+                              'Label': labels})
+    chart = alt.Chart(df_altair).mark_circle().encode(
+        x='UMAP1:Q',
+        y='UMAP2:Q',
+        color='Label:N'
+    ).properties(
+        title='UMAP of Confluency Data',
+    ).interactive()
+    chart.save(os.path.join(output_dir, 'umap_confluency_altair.html'))
+
     # pseudotime computation, output is a 1D array of pseudotime values for each cell
     pseudotime_array = pseudotime(matrix=cells, root_cells=day_0_label, clusters=clusters)
 
