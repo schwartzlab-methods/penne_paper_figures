@@ -50,7 +50,7 @@ def pseudotime_analysis_and_plot(array, labels, output_dir):
     label_to_color = {label: cmap(i) for i, label in enumerate(unique_labels)}
     colors = [label_to_color[label] for label in labels]
     plt.scatter(cells[:, 0], cells[:, 1], c=colors, s=5)
-    # create a legend    
+    # create a legend
     handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=label_to_color[label], markersize=5) for label in unique_labels]
     plt.legend(handles, unique_labels, title="Experiment Types", bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.xlabel('UMAP 1')
