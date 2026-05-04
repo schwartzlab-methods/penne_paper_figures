@@ -137,7 +137,6 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    rng = np.random.default_rng()
 
     gt_files = [os.path.join(args.ground_truth, f) 
                 for f in os.listdir(args.ground_truth) if f.endswith('_gene_symbols.txt')]
