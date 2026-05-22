@@ -137,7 +137,7 @@ def pseudotime_analysis_and_plot(array, labels, output_dir):
 
     return pseudotime_array
 
-def compute_marker_gene_scores(array, labels, pseudotime_array, gene_set, gene_names, output_dir, gene_set_name):
+def compute_marker_gene_scores(array, labels, pseudotime_array, gene_set, gene_names, output_dir, gene_set_name, cell_type_labels_npy=None):
     '''
     Compute marker gene scores and plot against pseudotime.
     '''
@@ -225,7 +225,43 @@ def compute_marker_gene_scores(array, labels, pseudotime_array, gene_set, gene_n
                 stat, p_val = wilcoxon_rank_sum_test(group1, group2)
                 f.write(f"{unique_labels[i]} vs {unique_labels[j]}: statistic={stat:.4f}, p-value={p_val:.4e}\n")
 
-
+    # if cell type labels are provided, plot side by side box plots of marker scores for each cell type for each day
+    if cell_type_labels_npy is not None:
+        cell_type_labels = np.load(cell_type_labels_npy)
+        complete_labels = np.array([f"{lab}_{ctype}" for lab, ctype in zip(labels, cell_type_labels)])
+        df_cell_type = pd.DataFrame({'Labels': labels,
+                                     'Complete_Labels': complete_labels,
+                                     'Marker_Score': marker_scores,
+                                     'Cell_Type': cell_type_labels})
+        chart = alt.Chart(df_cell_type).mark_boxplot().encode(
+            x=alt.X('Complete_Labels', sort=np.unique(complete_labels).tolist(), axis=alt.Axis(labelAngle=-45)),
+            y='Marker_Score',
+            color='Cell_Type'
+        ).properties(
+            title=f'{gene_set_name} Marker Gene Score Distribution by Label and Cell Type'
+        ).interactive()
+        chart.save(os.path.join(output_dir, f'marker_score_boxplot_by_cell_type_{gene_set_name}.html'))
+        # plot Day 2 only
+        df_day2 = df_cell_type[df_cell_type['Labels'] == 'day2']
+        chart = alt.Chart(df_day2).mark_boxplot().encode(
+            x=alt.X('Cell_Type', sort=np.unique(df_day2['Cell_Type']).tolist(), axis=alt.Axis(labelAngle=-45)),
+            y='Marker_Score',
+            color='Cell_Type'
+        ).properties(
+            title=f'{gene_set_name} Marker Gene Score Distribution for Day 2 by Cell Type'
+        ).interactive()
+        chart.save(os.path.join(output_dir, f'marker_score_boxplot_day2_by_cell_type_{gene_set_name}.html'))
+        # statistical test for marker scores between cell types within each label
+        with open(os.path.join(output_dir, f'marker_score_wilcoxon_by_cell_type_{gene_set_name}.txt'), 'w') as f:
+            f.write("Wilcoxon Rank-Sum Test Results for Marker Gene Scores by Cell Type:\n")
+            for label in unique_labels:
+                cell_types = np.unique(cell_type_labels[labels == label])
+                for i in range(len(cell_types)):
+                    for j in range(i + 1, len(cell_types)):
+                        group1 = marker_scores[(labels == label) & (cell_type_labels == cell_types[i])]
+                        group2 = marker_scores[(labels == label) & (cell_type_labels == cell_types[j])]
+                        stat, p_val = wilcoxon_rank_sum_test(group1, group2)
+                        f.write(f"{label}: {cell_types[i]} vs {cell_types[j]}: statistic={stat:.4f}, p-value={p_val:.4e}\n")
     
     print("Marker gene scores computed and plot saved.")
 
@@ -233,6 +269,7 @@ def main():
     parser = argparse.ArgumentParser(description="Pseudo-time analysis for confluency data")
     parser.add_argument('--input', type=str, help='Path to input numpy array file of the exp matrix')
     parser.add_argument('--labels', type=str, help='Path to input numpy array file of the confluency labels')
+    parser.add_argument('--cell_type_labels', type=str, default=None, help='Path to input numpy array file of the cell type labels')
     parser.add_argument('--genes', type=str, default=None, help='Path to input numpy array file of the gene names')
     parser.add_argument('--gene_set', type=str, default=None, help='Path to input gmt file of gene set of interest')
     parser.add_argument('--output', type=str, help='Path to output directory for results')
@@ -256,7 +293,7 @@ def main():
         gene_set_name = file_L[0]  # get the gene set name
         print(f"Loaded gene set: {gene_set_name} with {len(gene_set)} genes.")
         gene_names = np.load(args.genes)
-        compute_marker_gene_scores(array, labels, pseudotime_array, gene_set, gene_names, args.output, gene_set_name)
+        compute_marker_gene_scores(array, labels, pseudotime_array, gene_set, gene_names, args.output, gene_set_name, args.cell_type_labels)
 
 
 if __name__ == "__main__":

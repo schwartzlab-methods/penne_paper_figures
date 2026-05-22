@@ -95,6 +95,7 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
     marker_in_cell = []
     marker_across_cell = []
 
+    auc_df_final = pd.DataFrame(columns=["cell_type", "tpr", "fpr"])
     for cell_type, gene_set in tqdm(enriched_gene_sets.items()):
         # Filter for genes in the set that exist in gene_names
         valid_genes = [g for g in gene_set if g in gene_names]
@@ -108,6 +109,33 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         is_target = label_series == cell_type
         target_scores = module_score[is_target]
         background_scores = module_score[~is_target]
+
+        # plot AUC curve for how well the module score can separate the target cell type from the rest
+        from sklearn.metrics import roc_auc_score
+        from sklearn.metrics import roc_curve
+        auc_score = roc_auc_score(is_target.astype(int), module_score)
+        print(f"AUC for {cell_type} marker genes: {auc_score:.4f}")
+        roc_output = roc_curve(is_target.astype(int), module_score)
+        roc_data = pd.DataFrame({"fpr": roc_output[0], "tpr": roc_output[1]})
+        auc_df_final = pd.concat([auc_df_final, pd.DataFrame({"cell_type": [cell_type]*len(roc_data), "fpr": roc_data["fpr"], "tpr": roc_data["tpr"]})], ignore_index=True)
+        plt.figure(figsize=(6, 6))
+        sns.lineplot(data=roc_data, x="fpr", y="tpr")
+        plt.plot([0, 1], [0, 1], 'k--')
+        plt.title(f"ROC Curve for {cell_type} Marker Genes (AUC={auc_score:.4f})")
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.tight_layout()
+        plt.savefig(os.path.join(out, f"{cell_type}_marker_genes_roc_curve.png"))
+        plt.close()
+
+        # repeat with altair plot
+        roc_plot = alt.Chart(roc_data).mark_line().encode(
+            x='fpr:Q',
+            y='tpr:Q'
+        ).properties(
+            title=f"ROC Curve for {cell_type} Marker Genes (AUC={auc_score:.4f})",
+        ).interactive()
+        roc_plot.save(os.path.join(out, f"{cell_type}_marker_genes_roc_curve_altair.html"))
 
         # compare the mean exp of gene set vs everything else
         # get module score for the complement of the gene set
@@ -201,6 +229,18 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
             title=f"Mean Log2-Normalized Expression for {cell_type} Marker Genes",
         ).interactive()
         box_plot.save(os.path.join(out, f"{cell_type}_gene_set_mean_exp_within_altair.html"))
+    # add diagnal line for the AUC plot
+    auc_df_final = pd.concat([auc_df_final, pd.DataFrame({"cell_type": ["Diagonal"]*2, "fpr": [0, 1], "tpr": [0, 1]})], ignore_index=True)
+    # plot final AUC with altair
+    auc_plot = alt.Chart(auc_df_final).mark_line().encode(
+        x='fpr:Q',
+        y='tpr:Q',
+        color='cell_type:N'
+    ).properties(
+        title=f"ROC Curve for Marker Genes Across Cell Types",
+    ).interactive()
+    auc_plot.save(os.path.join(out, f"all_cell_types_marker_genes_roc_curve_altair.html"))
+
     results_df = pd.DataFrame(results)
     results_df.to_csv(os.path.join(out, "gene_set_enrichment.csv"))
 
