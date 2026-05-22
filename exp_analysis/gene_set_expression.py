@@ -111,12 +111,11 @@ def validate_enrichment(expression_matrix, cell_labels, gene_names, enriched_gen
         background_scores = module_score[~is_target]
 
         # plot AUC curve for how well the module score can separate the target cell type from the rest
-        module_score_normalized = (module_score - module_score.min()) / (module_score.max() - module_score.min())
         from sklearn.metrics import roc_auc_score
         from sklearn.metrics import roc_curve
         auc_score = roc_auc_score(is_target.astype(int), module_score)
         print(f"AUC for {cell_type} marker genes: {auc_score:.4f}")
-        roc_output = roc_curve(is_target.astype(int), module_score_normalized)
+        roc_output = roc_curve(is_target.astype(int), module_score)
         roc_data = pd.DataFrame({"fpr": roc_output[0], "tpr": roc_output[1]})
         auc_df_final = pd.concat([auc_df_final, pd.DataFrame({"cell_type": [cell_type]*len(roc_data), "fpr": roc_data["fpr"], "tpr": roc_data["tpr"]})], ignore_index=True)
         plt.figure(figsize=(6, 6))
