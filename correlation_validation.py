@@ -51,6 +51,7 @@ def compute_stats_gt(gt_df: pd.DataFrame, pred_df: np.array, save: str) -> None:
         "Ground Truth": num_features_per_sample_gt,
         "Predicted": num_features_per_sample_pred
     })
+    df.to_csv(os.path.join(save, "gt_num_features_per_sample.csv"), index=False)
     # plot side by size violin
     plt.figure(figsize=(12, 12))
     sns.violinplot(data=df, orient="v")
@@ -58,6 +59,16 @@ def compute_stats_gt(gt_df: pd.DataFrame, pred_df: np.array, save: str) -> None:
     plt.ylabel("Number of Features")
     plt.savefig(os.path.join(save, "gt_num_features_violin.png"))
     plt.close()
+    # altair boxplot
+    altair_df = pd.DataFrame({
+        "Type": ["Ground Truth"] * len(num_features_per_sample_gt) + ["Predicted"] * len(num_features_per_sample_pred),
+        "Number of Features": num_features_per_sample_gt.tolist() + num_features_per_sample_pred.tolist()
+    })
+    chart = alt.Chart(altair_df).mark_boxplot().encode(
+        x="Type:N",
+        y="Number of Features:Q"
+    ).interactive()
+    chart.save(os.path.join(save, "gt_num_features_boxplot.html"))
 
     # plot the distribution of mean expression of genes per sample for both gt and pred
     mean_expression_per_sample_gt = gt_df.mean(axis=1)
@@ -72,6 +83,18 @@ def compute_stats_gt(gt_df: pd.DataFrame, pred_df: np.array, save: str) -> None:
     plt.ylabel("Mean Expression")
     plt.savefig(os.path.join(save, "gt_mean_expression_violin.png"))
     plt.close()
+    # plot boxplot with altair
+    altair_df = pd.DataFrame({
+        "Type": ["Ground Truth"] * len(mean_expression_per_sample_gt) + ["Predicted"] * len(mean_expression_per_sample_pred),
+        "Mean Expression": mean_expression_per_sample_gt.tolist() + mean_expression_per_sample_pred.tolist()
+    })
+    chart = alt.Chart(altair_df).mark_boxplot().encode(
+        x="Type:N",
+        y="Mean Expression:Q"
+    ).properties(
+        title="Mean Gene Expression per Sample"
+    ).interactive()
+    chart.save(os.path.join(save, "gt_mean_expression_boxplot.html"))
 
     # plot the distribution of gene with highest std in gt
     std_across_genes = gt_df.std(axis=0)
@@ -81,15 +104,28 @@ def compute_stats_gt(gt_df: pd.DataFrame, pred_df: np.array, save: str) -> None:
         "pred": pred_df.flatten()[idx_to_plot],
         "feature": gt_df.columns.values[idx_to_plot]
     })
+    df.to_csv(os.path.join(save, "gt_gene_distribution.csv"), index=False)
 
     plt.figure(figsize=(12,12))
-    sns.violinplot(x="feature", y="value", hue="type",
-                data=pd.melt(df, id_vars="feature", value_vars=["truth", "pred"], var_name="type"))
+    melted = pd.melt(df, id_vars="feature", value_vars=["truth", "pred"], var_name="type")
+    sns.violinplot(x="feature", y="value", hue="type", data=melted)
     plt.title("Distribution per gene: predictions vs truth of top genes with highest std")
     plt.xlabel("Gene")
     plt.ylabel("Value")
     plt.savefig(os.path.join(save, "gt_gene_distribution_violin.png"))
     plt.close()
+    # altair
+    altair_df = pd.DataFrame({
+        "Feature": df["feature"].tolist() * 2,
+        "Value": df["truth"].tolist() + df["pred"].tolist(),
+        "Type": ["Ground Truth"] * len(df) + ["Predicted"] * len(df)
+    })
+    chart = alt.Chart(altair_df).mark_boxplot().encode(
+        x="Feature:N",
+        y="Value:Q",
+        color="Type:N"
+    ).interactive()
+    chart.save(os.path.join(save, "gt_gene_distribution_boxplot.html"))
 
     highest_pred_genes = pd.DataFrame(pred_df).std(axis=0).nlargest(10).index
     df = pd.DataFrame({
@@ -105,6 +141,18 @@ def compute_stats_gt(gt_df: pd.DataFrame, pred_df: np.array, save: str) -> None:
     plt.ylabel("Value")
     plt.savefig(os.path.join(save, "gt_gene_distribution_violin_largest_in_pred.png"))
     plt.close()
+    # altair
+    altair_df = pd.DataFrame({
+        "Feature": df["feature"].tolist() * 2,
+        "Value": df["truth"].tolist() + df["pred"].tolist(),
+        "Type": ["Ground Truth"] * len(df) + ["Predicted"] * len(df)
+    })
+    chart = alt.Chart(altair_df).mark_boxplot().encode(
+        x="Feature:N",
+        y="Value:Q",
+        color="Type:N"
+    ).interactive()
+    chart.save(os.path.join(save, "gt_gene_distribution_boxplot_largest_in_pred.html"))
 
     # plot variance per sample vs per gene
     plt.figure(figsize=(12, 6))
@@ -125,6 +173,18 @@ def compute_stats_gt(gt_df: pd.DataFrame, pred_df: np.array, save: str) -> None:
     plt.ylabel("Variance")
     plt.savefig(os.path.join(save, "gt_variance_per_gene.png"))
     plt.close()
+    # altair variance per sample
+    altair_df = pd.DataFrame({
+        "Type": ["Ground Truth"] * gt_df.shape[0] + ["Predicted"] * pred_df.shape[0],
+        "Variance": gt_df.var(axis=1).tolist() + np.var(pred_df, axis=1).tolist()
+    })
+    chart = alt.Chart(altair_df).mark_boxplot().encode(
+        x="Type:N",
+        y="Variance:Q"
+    ).properties(
+        title="Variance per Sample: Predictions vs Truth"
+    ).interactive()
+    chart.save(os.path.join(save, "gt_variance_per_sample_boxplot.html"))
 
 def main():
     print("Starting correlation validation...")
