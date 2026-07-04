@@ -107,9 +107,8 @@ def compute_stats_gt(gt_df: pd.DataFrame, pred_df: np.array, save: str) -> None:
     df.to_csv(os.path.join(save, "gt_gene_distribution.csv"), index=False)
 
     plt.figure(figsize=(12,12))
-    print(pd.melt(df, id_vars="feature", value_vars=["truth", "pred"], var_name="type").head())
-    sns.violinplot(x="feature", y="value", hue="type",
-                data=pd.melt(df, id_vars="feature", value_vars=["truth", "pred"], var_name="type"))
+    melted = pd.melt(df, id_vars="feature", value_vars=["truth", "pred"], var_name="type")
+    sns.violinplot(x="feature", y="value", hue="type", data=melted)
     plt.title("Distribution per gene: predictions vs truth of top genes with highest std")
     plt.xlabel("Gene")
     plt.ylabel("Value")
