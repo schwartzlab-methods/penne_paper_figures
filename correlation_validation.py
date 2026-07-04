@@ -176,7 +176,7 @@ def compute_stats_gt(gt_df: pd.DataFrame, pred_df: np.array, save: str) -> None:
     # altair variance per sample
     altair_df = pd.DataFrame({
         "Type": ["Ground Truth"] * gt_df.shape[0] + ["Predicted"] * pred_df.shape[0],
-        "Variance": gt_df.var(axis=1).tolist() + pd.DataFrame(pred_df).var(axis=1).tolist()
+        "Variance": gt_df.var(axis=1).tolist() + np.var(pred_df, axis=1).tolist()
     })
     chart = alt.Chart(altair_df).mark_boxplot().encode(
         x="Type:N",
